@@ -1,0 +1,31 @@
+{
+  "name": "@boundly/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "dev": "expo start --clear",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "android:release": "cd android && ./gradlew assembleRelease",
+    "android:apk": "cd android && ./gradlew assembleRelease",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo \"Add eslint in next step\"",
+    "test": "echo \"Add tests in next step\""
+  },
+  "dependencies": {
+    "@boundly/domain": "workspace:*",
+    "@boundly/native-enforcement": "workspace:*",
+    "@boundly/persistence": "workspace:*",
+    "@boundly/ui-kit": "workspace:*",
+    "expo": "^52.0.33",
+    "expo-sqlite": "~15.1.4",
+    "react": "^19.0.0",
+    "react-native": "^0.79.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.8",
+    "typescript": "^5.7.3"
+  }
+}

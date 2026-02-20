@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@boundly/domain": [
+        "packages/domain/src/index.ts"
+      ],
+      "@boundly/persistence": [
+        "packages/persistence/src/index.ts"
+      ],
+      "@boundly/native-enforcement": [
+        "packages/native-enforcement/src/index.ts"
+      ],
+      "@boundly/ui-kit": [
+        "packages/ui-kit/src/index.ts"
+      ],
+      "@boundly/test-utils": [
+        "packages/test-utils/src/index.ts"
+      ]
+    }
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build"
+  ]
+}

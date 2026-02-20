@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# build artifacts
+dist/
+build/
+.turbo/
+coverage/
+
+# Expo / React Native
+.expo/
+.expo-shared/
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+
+# logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/

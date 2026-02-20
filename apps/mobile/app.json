@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Boundly",
+    "slug": "boundly",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.boundly.app",
+      "supportsTablet": false
+    },
+    "android": {
+      "package": "com.boundly.app"
+    }
+  }
+}
