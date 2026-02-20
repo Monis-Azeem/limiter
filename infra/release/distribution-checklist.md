@@ -14,9 +14,9 @@
 
 ## Build
 
-- [ ] Release keystore configured
-- [ ] `pnpm --filter @boundly/mobile android:apk` completed
-- [ ] APK signature verified
+- [ ] EAS project linked (`apps/mobile/eas.json` + `expo.extra.eas.projectId`)
+- [ ] `pnpm --filter @boundly/mobile eas:android:preview` completed
+- [ ] Build URL + artifact URL recorded
 
 ## Install checks
 

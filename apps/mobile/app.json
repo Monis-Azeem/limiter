@@ -14,6 +14,11 @@
     },
     "android": {
       "package": "com.boundly.app"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "f19ef48c-8f13-4b0a-89aa-fde3e0ab3994"
+      }
     }
   }
 }

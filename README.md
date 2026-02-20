@@ -53,3 +53,13 @@ pnpm --filter @boundly/mobile android:apk
 ```
 
 Note: Android Gradle builds require local JDK installation.
+
+## Android Share Link (EAS Cloud Build)
+
+Use EAS Build when you want a cloud-generated install link (no local Android Studio build required):
+
+```bash
+pnpm --filter @boundly/mobile eas:android:preview
+```
+
+That creates an internal-distribution APK and returns an Expo build URL you can share.

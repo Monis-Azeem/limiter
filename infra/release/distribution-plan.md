@@ -2,8 +2,8 @@
 
 ## Android (Free-First)
 
-- Generate signed APK artifacts.
-- Share directly via file or secure link.
+- Generate internal-distribution APK using Expo EAS cloud build.
+- Share Expo build URL or direct artifact URL.
 - Include in-app version display and update prompt.
 
 ## iOS (Free Constraint)
