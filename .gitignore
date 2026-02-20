@@ -1,19 +1,29 @@
 # dependencies
 node_modules/
 
+# local environment files
+.env
+.env.*
+!.env.example
+
 # build artifacts
 dist/
 build/
 .turbo/
 coverage/
+*.apk
+*.aab
 
 # Expo / React Native
 .expo/
 .expo-shared/
+.eas/
 *.jks
 *.keystore
 *.p12
 *.mobileprovision
+apps/mobile/android/local.properties
+apps/mobile/ios/.xcode.env.local
 
 # logs
 npm-debug.log*
