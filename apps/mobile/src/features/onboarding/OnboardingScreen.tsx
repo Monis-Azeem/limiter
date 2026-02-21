@@ -69,9 +69,13 @@ export function OnboardingScreen({
 
       <Card>
         <Text style={styles.sectionTitle}>Detected Apps</Text>
-        {managedApps.slice(0, 8).map((app) => (
-          <MetricRow key={app.id} label={app.displayName} value={app.platformPackageId} />
-        ))}
+        {managedApps.length === 0 ? (
+          <Text style={styles.helper}>No launchable user apps detected yet.</Text>
+        ) : (
+          managedApps.slice(0, 20).map((app) => (
+            <MetricRow key={app.id} label={app.displayName} value={app.platformPackageId} />
+          ))
+        )}
       </Card>
 
       <Button

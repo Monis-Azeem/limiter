@@ -3,6 +3,8 @@ package com.boundly.app.enforcement
 import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -22,6 +24,7 @@ import com.facebook.react.bridge.WritableMap
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
+import java.util.Locale
 
 class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext) {
@@ -39,19 +42,44 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
       val launchIntent = Intent(Intent.ACTION_MAIN, null).apply {
         addCategory(Intent.CATEGORY_LAUNCHER)
       }
-      val resolveInfos = packageManager.queryIntentActivities(launchIntent, 0)
-      val result = Arguments.createArray()
+      val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        packageManager.queryIntentActivities(
+          launchIntent,
+          PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong())
+        )
+      } else {
+        @Suppress("DEPRECATION")
+        packageManager.queryIntentActivities(launchIntent, PackageManager.MATCH_ALL)
+      }
 
-      resolveInfos.forEach { resolveInfo ->
-        val packageName = resolveInfo.activityInfo?.packageName ?: return@forEach
-        if (packageName == reactContext.packageName) {
-          return@forEach
+      val userApps = resolveInfos
+        .mapNotNull { resolveInfo ->
+          val activityInfo = resolveInfo.activityInfo ?: return@mapNotNull null
+          val packageName = activityInfo.packageName
+          if (packageName == reactContext.packageName) {
+            return@mapNotNull null
+          }
+
+          val flags = activityInfo.applicationInfo?.flags ?: 0
+          val isSystemApp = (flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
+            (flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
+          if (isSystemApp) {
+            return@mapNotNull null
+          }
+
+          val label = resolveInfo.loadLabel(packageManager)?.toString()?.trim()
+          val displayName = if (label.isNullOrBlank()) packageName else label
+          Triple(packageName, displayName, packageName)
         }
+        .distinctBy { triple -> triple.first }
+        .sortedBy { triple -> triple.second.lowercase(Locale.US) }
 
+      val result = Arguments.createArray()
+      userApps.forEach { (id, displayName, platformPackageId) ->
         val map = Arguments.createMap()
-        map.putString("id", packageName)
-        map.putString("displayName", resolveInfo.loadLabel(packageManager).toString())
-        map.putString("platformPackageId", packageName)
+        map.putString("id", id)
+        map.putString("displayName", displayName)
+        map.putString("platformPackageId", platformPackageId)
         result.pushMap(map)
       }
 
@@ -136,6 +164,7 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
     try {
       policyStore.setProfilesJson(readableArrayToJsonArray(profiles).toString())
       policyStore.setEnforcementEnabled(true)
+      policyStore.clearLastAccessibilityError()
       BoundlyForegroundService.start(reactContext)
       promise.resolve(null)
     } catch (error: Exception) {
@@ -148,6 +177,7 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
     try {
       policyStore.setEnforcementEnabled(false)
       policyStore.clearBlockedPackages()
+      policyStore.clearLastAccessibilityError()
       BoundlyForegroundService.stop(reactContext)
       promise.resolve(null)
     } catch (error: Exception) {
@@ -169,21 +199,24 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
   fun getHealth(promise: Promise) {
     try {
       val missingPermissions = mutableListOf<String>()
+      val accessibilityEnabled = hasAccessibilityServiceEnabled()
       if (!hasUsageAccess()) {
         missingPermissions.add("usage_access")
       }
-      if (!hasAccessibilityServiceEnabled()) {
+      if (!accessibilityEnabled) {
         missingPermissions.add("accessibility")
       }
       if (!isIgnoringBatteryOptimizations()) {
         missingPermissions.add("ignore_battery_optimization")
       }
+      val lastAccessibilityError = policyStore.getLastAccessibilityError()
 
       val health = Arguments.createMap()
       health.putString(
         "status",
         when {
           missingPermissions.isNotEmpty() -> "permissions_missing"
+          accessibilityEnabled && !lastAccessibilityError.isNullOrBlank() -> "enforcement_degraded"
           policyStore.isEnforcementEnabled() -> "enforcement_running"
           else -> "enforcement_stopped"
         }
@@ -192,6 +225,9 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
       val missingArray = Arguments.createArray()
       missingPermissions.forEach { missingPermission -> missingArray.pushString(missingPermission) }
       health.putArray("missingPermissions", missingArray)
+      if (!lastAccessibilityError.isNullOrBlank()) {
+        health.putString("detail", lastAccessibilityError)
+      }
       health.putString("lastHeartbeatIso", policyStore.getLastHeartbeatIso() ?: Instant.now().toString())
       promise.resolve(health)
     } catch (error: Exception) {

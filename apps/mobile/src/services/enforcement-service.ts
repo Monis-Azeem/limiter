@@ -1,5 +1,4 @@
 import {
-  MockNativeEnforcementAdapter,
   type NativeEnforcementAdapter,
   ReactNativeEnforcementAdapter
 } from "@boundly/native-enforcement";
@@ -56,6 +55,47 @@ class IosScaffoldEnforcementAdapter implements NativeEnforcementAdapter {
   }
 }
 
+class AndroidUnavailableEnforcementAdapter implements NativeEnforcementAdapter {
+  async listInstalledApps(): Promise<AppTarget[]> {
+    return [];
+  }
+
+  async getPermissionStates(): Promise<PermissionState[]> {
+    const checkedAtIso = new Date().toISOString();
+    return [
+      { key: "usage_access", granted: false, checkedAtIso },
+      { key: "accessibility", granted: false, checkedAtIso },
+      { key: "ignore_battery_optimization", granted: false, checkedAtIso }
+    ];
+  }
+
+  async requestPermission(_permissionKey: PermissionKey): Promise<boolean> {
+    return false;
+  }
+
+  async startEnforcement(_profiles: RuleProfile[]): Promise<void> {}
+
+  async stopEnforcement(): Promise<void> {}
+
+  async syncRules(_profiles: RuleProfile[]): Promise<void> {}
+
+  async getHealth(): Promise<EnforcementHealth> {
+    return {
+      status: "enforcement_degraded",
+      missingPermissions: ["usage_access", "accessibility", "ignore_battery_optimization"],
+      detail: "Native enforcement module unavailable. Install the EAS APK build, not Expo Go."
+    };
+  }
+
+  async getUsageSnapshot(): Promise<UsageSnapshot> {
+    return createEmptyUsageSnapshot();
+  }
+
+  async streamUsageEvents(): Promise<UsageEvent[]> {
+    return [];
+  }
+}
+
 function createAdapter() {
   try {
     return new ReactNativeEnforcementAdapter();
@@ -63,7 +103,7 @@ function createAdapter() {
     if (Platform.OS === "ios") {
       return new IosScaffoldEnforcementAdapter();
     }
-    return new MockNativeEnforcementAdapter();
+    return new AndroidUnavailableEnforcementAdapter();
   }
 }
 

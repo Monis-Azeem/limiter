@@ -26,12 +26,23 @@ class BoundlyPolicyStore(private val context: Context) {
 
   fun getBlockedPackages(): Set<String> {
     val raw = prefs.getString(KEY_BLOCKED_PACKAGES, "[]") ?: "[]"
-    val jsonArray = JSONArray(raw)
     val blockedPackages = mutableSetOf<String>()
-    for (index in 0 until jsonArray.length()) {
-      blockedPackages.add(jsonArray.getString(index))
-    }
+    runCatching { JSONArray(raw) }
+      .onFailure {
+        prefs.edit().putString(KEY_BLOCKED_PACKAGES, "[]").apply()
+      }
+      .getOrElse { JSONArray("[]") }
+      .let { jsonArray ->
+        for (index in 0 until jsonArray.length()) {
+          blockedPackages.add(jsonArray.optString(index, ""))
+        }
+      }
+    blockedPackages.removeAll { it.isBlank() }
     return blockedPackages
+  }
+
+  fun clearBlockedPackages() {
+    prefs.edit().putString(KEY_BLOCKED_PACKAGES, "[]").apply()
   }
 
   fun setLastHeartbeatIso(lastHeartbeatIso: String) {
@@ -52,8 +63,14 @@ class BoundlyPolicyStore(private val context: Context) {
 
   fun getLastOverrideAtIso(): String? = prefs.getString(KEY_LAST_OVERRIDE_AT_ISO, null)
 
-  fun clearBlockedPackages() {
-    prefs.edit().putString(KEY_BLOCKED_PACKAGES, "[]").apply()
+  fun setLastAccessibilityError(errorMessage: String?) {
+    prefs.edit().putString(KEY_LAST_ACCESSIBILITY_ERROR, errorMessage).apply()
+  }
+
+  fun getLastAccessibilityError(): String? = prefs.getString(KEY_LAST_ACCESSIBILITY_ERROR, null)
+
+  fun clearLastAccessibilityError() {
+    prefs.edit().remove(KEY_LAST_ACCESSIBILITY_ERROR).apply()
   }
 
   companion object {
@@ -64,5 +81,6 @@ class BoundlyPolicyStore(private val context: Context) {
     const val KEY_LAST_HEARTBEAT_ISO = "last_heartbeat_iso"
     const val KEY_OVERRIDE_COUNT_TODAY = "override_count_today"
     const val KEY_LAST_OVERRIDE_AT_ISO = "last_override_at_iso"
+    const val KEY_LAST_ACCESSIBILITY_ERROR = "last_accessibility_error"
   }
 }

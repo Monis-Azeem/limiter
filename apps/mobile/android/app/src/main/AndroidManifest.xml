@@ -12,6 +12,10 @@
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
   <queries>
     <intent>
+      <action android:name="android.intent.action.MAIN"/>
+      <category android:name="android.intent.category.LAUNCHER"/>
+    </intent>
+    <intent>
       <action android:name="android.intent.action.VIEW"/>
       <category android:name="android.intent.category.BROWSABLE"/>
       <data android:scheme="https"/>
@@ -45,7 +49,7 @@
       android:foregroundServiceType="dataSync" />
     <service
       android:name=".enforcement.BoundlyAccessibilityService"
-      android:exported="false"
+      android:exported="true"
       android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
       <intent-filter>
         <action android:name="android.accessibilityservice.AccessibilityService" />

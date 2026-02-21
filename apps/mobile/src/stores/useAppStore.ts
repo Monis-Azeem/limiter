@@ -23,12 +23,58 @@ const DEFAULT_RETENTION_POLICY: RetentionPolicy = {
   auditDays: 30
 };
 
+const DEFAULT_TARGET_PACKAGES = [
+  "com.instagram.android",
+  "com.google.android.youtube",
+  "com.linkedin.android",
+  "com.whatsapp"
+];
+
+const LEGACY_TARGET_ID_MAP: Record<string, string> = {
+  instagram: "com.instagram.android",
+  youtube: "com.google.android.youtube",
+  linkedin: "com.linkedin.android",
+  whatsapp: "com.whatsapp"
+};
+
 function nowIso(): string {
   return new Date().toISOString();
 }
 
 function createId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeTargetId(targetId: string): string {
+  const token = targetId.trim();
+  return LEGACY_TARGET_ID_MAP[token] ?? token;
+}
+
+function normalizeProfiles(profiles: RuleProfile[]): RuleProfile[] {
+  return profiles.map((profile) => {
+    const normalizedTargetIds = Array.from(
+      new Set(profile.targetAppIds.map(normalizeTargetId).filter((id) => id.length > 0))
+    );
+
+    const nextTargetIds =
+      normalizedTargetIds.length > 0
+        ? normalizedTargetIds
+        : [DEFAULT_TARGET_PACKAGES[0] ?? "com.instagram.android"];
+    const unchanged =
+      nextTargetIds.length === profile.targetAppIds.length &&
+      nextTargetIds.every((targetId, index) => targetId === profile.targetAppIds[index]);
+
+    if (unchanged) {
+      return profile;
+    }
+
+    return {
+      ...profile,
+      targetAppIds: nextTargetIds,
+      revision: profile.revision + 1,
+      updatedAtIso: nowIso()
+    };
+  });
 }
 
 function createDefaultProfiles(): RuleProfile[] {
@@ -40,7 +86,7 @@ function createDefaultProfiles(): RuleProfile[] {
       revision: 1,
       updatedAtIso,
       enabled: true,
-      targetAppIds: ["instagram", "youtube", "linkedin", "whatsapp"],
+      targetAppIds: DEFAULT_TARGET_PACKAGES,
       windows: [
         {
           id: "work-window",
@@ -67,7 +113,7 @@ function createDefaultProfiles(): RuleProfile[] {
       revision: 1,
       updatedAtIso,
       enabled: true,
-      targetAppIds: ["instagram", "youtube", "linkedin", "whatsapp"],
+      targetAppIds: DEFAULT_TARGET_PACKAGES,
       windows: [
         {
           id: "sleep-window",
@@ -94,7 +140,7 @@ function createDefaultProfiles(): RuleProfile[] {
       revision: 1,
       updatedAtIso,
       enabled: true,
-      targetAppIds: ["instagram", "youtube", "linkedin", "whatsapp"],
+      targetAppIds: DEFAULT_TARGET_PACKAGES,
       windows: [
         {
           id: "focus-window",
@@ -195,7 +241,7 @@ const initialHealth: EnforcementHealth = {
 const initialDecision = calculateDecision(
   defaultProfiles[0]!,
   initialUsage,
-  "instagram",
+  "com.instagram.android",
   false,
   false,
   initialHealth
@@ -205,7 +251,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeTab: "onboarding",
   profiles: defaultProfiles,
   activeProfileId: defaultProfiles[0]!.id,
-  selectedTargetId: "instagram",
+  selectedTargetId: "com.instagram.android",
   usage: initialUsage,
   permissionsGranted: false,
   permissionStates: [],
@@ -228,7 +274,28 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setSelectedTargetId: (targetId) => {
-    set({ selectedTargetId: targetId, intentConfirmed: false, delaySatisfied: false });
+    set((state) => ({
+      selectedTargetId: targetId,
+      intentConfirmed: false,
+      delaySatisfied: false,
+      profiles: state.profiles.map((profile) =>
+        profile.id === state.activeProfileId
+          ? {
+              ...profile,
+              targetAppIds: [targetId],
+              revision: profile.revision + 1,
+              updatedAtIso: nowIso()
+            }
+          : profile
+      )
+    }));
+
+    const state = get();
+    const repository = getProfileRepository();
+    void repository
+      .replaceProfiles(state.profiles)
+      .then(() => enforcementService.syncRules(state.profiles));
+
     get().recomputeDecision();
   },
 
@@ -395,6 +462,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       await repository.replaceProfiles(profiles);
     }
 
+    const normalizedProfiles = normalizeProfiles(profiles);
+    if (JSON.stringify(normalizedProfiles) !== JSON.stringify(profiles)) {
+      profiles = normalizedProfiles;
+      await repository.replaceProfiles(profiles);
+    }
+
     const retentionPolicy = await repository.getRetentionPolicy();
 
     const usage = await repository.getUsageSnapshot();
@@ -425,9 +498,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       await enforcementService.startEnforcement(profiles);
     }
 
+    const activeProfileId = profiles[0]?.id ?? "work";
+    const selectedTargetId =
+      profiles[0]?.targetAppIds[0] ?? DEFAULT_TARGET_PACKAGES[0] ?? "com.instagram.android";
+
     set({
       profiles,
-      activeProfileId: profiles[0]?.id ?? "work",
+      activeProfileId,
+      selectedTargetId,
       usage,
       permissionStates,
       permissionsGranted,
