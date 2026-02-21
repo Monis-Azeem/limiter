@@ -17,18 +17,20 @@
     "test": "echo \"Add tests in next step\""
   },
   "dependencies": {
+    "@babel/runtime": "^7.28.6",
     "@boundly/domain": "workspace:*",
     "@boundly/native-enforcement": "workspace:*",
     "@boundly/persistence": "workspace:*",
     "@boundly/ui-kit": "workspace:*",
     "expo": "^52.0.33",
+    "expo-asset": "~11.0.5",
     "expo-sqlite": "~15.1.4",
-    "react": "^19.0.0",
-    "react-native": "^0.79.0",
+    "react": "^18.3.1",
+    "react-native": "^0.76.9",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
-    "@types/react": "^19.0.8",
+    "@types/react": "^18.3.28",
     "typescript": "^5.7.3"
   }
 }

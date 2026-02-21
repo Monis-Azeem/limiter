@@ -327,7 +327,14 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
         ReadableType.Number -> jsonObject.put(key, readableMap.getDouble(key))
         ReadableType.String -> jsonObject.put(key, readableMap.getString(key))
         ReadableType.Map -> jsonObject.put(key, readableMapToJsonObject(readableMap.getMap(key)))
-        ReadableType.Array -> jsonObject.put(key, readableArrayToJsonArray(readableMap.getArray(key)))
+        ReadableType.Array -> {
+          val nestedArray = readableMap.getArray(key)
+          if (nestedArray == null) {
+            jsonObject.put(key, JSONObject.NULL)
+          } else {
+            jsonObject.put(key, readableArrayToJsonArray(nestedArray))
+          }
+        }
       }
     }
 
