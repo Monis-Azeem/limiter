@@ -21,16 +21,20 @@ class BoundlyForegroundService : Service() {
 
   private val evaluateRunnable = object : Runnable {
     override fun run() {
-      if (!policyStore.isEnforcementEnabled()) {
-        policyStore.clearBlockedPackages()
-        policyStore.setLastHeartbeatIso(Instant.now().toString())
-        handler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
-        return
-      }
+      try {
+        if (!policyStore.isEnforcementEnabled()) {
+          policyStore.clearBlockedPackages()
+          policyStore.setLastHeartbeatIso(Instant.now().toString())
+          handler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
+          return
+        }
 
-      val blockedPackages = policyEvaluator.evaluateBlockedPackagesNow()
-      policyStore.setBlockedPackages(blockedPackages)
-      policyStore.setLastHeartbeatIso(Instant.now().toString())
+        val blockedPackages = policyEvaluator.evaluateBlockedPackagesNow()
+        policyStore.setBlockedPackages(blockedPackages)
+        policyStore.setLastHeartbeatIso(Instant.now().toString())
+      } catch (error: Exception) {
+        policyStore.appendDebugLog("Foreground service error: ${error.message ?: error.toString()}")
+      }
 
       handler.postDelayed(this, HEARTBEAT_INTERVAL_MS)
     }
@@ -40,15 +44,18 @@ class BoundlyForegroundService : Service() {
     super.onCreate()
     policyStore = BoundlyPolicyStore(this)
     policyEvaluator = BoundlyPolicyEvaluator(policyStore, UsageStatsCollector(this))
+    policyStore.appendDebugLog("Foreground service created")
     ensureNotificationChannel()
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     if (intent?.action == ACTION_STOP) {
+      policyStore.appendDebugLog("Foreground service stop requested")
       stopSelf()
       return START_NOT_STICKY
     }
 
+    policyStore.appendDebugLog("Foreground service started")
     startForeground(NOTIFICATION_ID, buildNotification())
     handler.removeCallbacks(evaluateRunnable)
     handler.post(evaluateRunnable)
@@ -57,6 +64,7 @@ class BoundlyForegroundService : Service() {
   }
 
   override fun onDestroy() {
+    policyStore.appendDebugLog("Foreground service destroyed")
     handler.removeCallbacks(evaluateRunnable)
     super.onDestroy()
   }

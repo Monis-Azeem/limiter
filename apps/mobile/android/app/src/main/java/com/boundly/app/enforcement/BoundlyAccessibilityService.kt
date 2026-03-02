@@ -1,7 +1,9 @@
 package com.boundly.app.enforcement
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -12,8 +14,20 @@ class BoundlyAccessibilityService : AccessibilityService() {
 
   override fun onServiceConnected() {
     super.onServiceConnected()
-    policyStore.clearLastAccessibilityError()
-    Log.i(TAG, "Accessibility service connected")
+    runCatching {
+      val info = serviceInfo
+      info.flags = info.flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+        info.flags = info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+      }
+      serviceInfo = info
+      policyStore.clearLastAccessibilityError()
+      policyStore.appendDebugLog("Accessibility service connected")
+      Log.i(TAG, "Accessibility service connected")
+    }.onFailure { error ->
+      policyStore.setLastAccessibilityError(error.message ?: error.toString())
+      Log.e(TAG, "Accessibility service connection failed", error)
+    }
   }
 
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -48,6 +62,7 @@ class BoundlyAccessibilityService : AccessibilityService() {
       }
 
       lastLaunchTimeMs = now
+      policyStore.appendDebugLog("Blocked app launch detected: $packageName")
       launchLockScreen(packageName)
     } catch (error: Exception) {
       policyStore.setLastAccessibilityError(error.message ?: error.toString())
@@ -57,6 +72,7 @@ class BoundlyAccessibilityService : AccessibilityService() {
 
   override fun onInterrupt() {
     policyStore.setLastAccessibilityError("Accessibility service interrupted by system")
+    policyStore.appendDebugLog("Accessibility service interrupted")
     Log.w(TAG, "Accessibility service interrupted")
   }
 

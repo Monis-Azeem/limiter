@@ -18,4 +18,6 @@ export interface NativeEnforcementAdapter {
   getHealth(): Promise<EnforcementHealth>;
   getUsageSnapshot(): Promise<UsageSnapshot>;
   streamUsageEvents(sinceIso?: string): Promise<UsageEvent[]>;
+  getDebugLogs(): Promise<string[]>;
+  clearDebugLogs(): Promise<void>;
 }

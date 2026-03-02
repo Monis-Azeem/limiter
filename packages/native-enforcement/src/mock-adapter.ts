@@ -118,4 +118,10 @@ export class MockNativeEnforcementAdapter implements NativeEnforcementAdapter {
   async streamUsageEvents(): Promise<UsageEvent[]> {
     return this.events;
   }
+
+  async getDebugLogs(): Promise<string[]> {
+    return [];
+  }
+
+  async clearDebugLogs(): Promise<void> {}
 }

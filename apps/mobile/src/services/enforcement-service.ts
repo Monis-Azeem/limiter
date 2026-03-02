@@ -53,6 +53,12 @@ class IosScaffoldEnforcementAdapter implements NativeEnforcementAdapter {
   async streamUsageEvents(): Promise<UsageEvent[]> {
     return [];
   }
+
+  async getDebugLogs(): Promise<string[]> {
+    return [];
+  }
+
+  async clearDebugLogs(): Promise<void> {}
 }
 
 class AndroidUnavailableEnforcementAdapter implements NativeEnforcementAdapter {
@@ -94,6 +100,12 @@ class AndroidUnavailableEnforcementAdapter implements NativeEnforcementAdapter {
   async streamUsageEvents(): Promise<UsageEvent[]> {
     return [];
   }
+
+  async getDebugLogs(): Promise<string[]> {
+    return [];
+  }
+
+  async clearDebugLogs(): Promise<void> {}
 }
 
 function createAdapter() {

@@ -21,6 +21,8 @@ interface NativeBoundlyModule {
   getHealth(): Promise<EnforcementHealth>;
   getUsageSnapshot(): Promise<UsageSnapshot>;
   streamUsageEvents(sinceIso?: string): Promise<UsageEvent[]>;
+  getDebugLogs(): Promise<string[]>;
+  clearDebugLogs(): Promise<void>;
 }
 
 const MODULE_NAME = "BoundlyEnforcement";
@@ -91,5 +93,13 @@ export class ReactNativeEnforcementAdapter implements NativeEnforcementAdapter {
 
   streamUsageEvents(sinceIso?: string): Promise<UsageEvent[]> {
     return this.requireModule().streamUsageEvents(sinceIso);
+  }
+
+  getDebugLogs(): Promise<string[]> {
+    return this.requireModule().getDebugLogs();
+  }
+
+  clearDebugLogs(): Promise<void> {
+    return this.requireModule().clearDebugLogs();
   }
 }

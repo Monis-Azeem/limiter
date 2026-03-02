@@ -117,6 +117,7 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
   @ReactMethod
   fun requestPermission(permissionKey: String, promise: Promise) {
     try {
+      policyStore.appendDebugLog("Permission request opened: $permissionKey")
       when (permissionKey) {
         "usage_access" -> {
           val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
@@ -165,6 +166,7 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
       policyStore.setProfilesJson(readableArrayToJsonArray(profiles).toString())
       policyStore.setEnforcementEnabled(true)
       policyStore.clearLastAccessibilityError()
+      policyStore.appendDebugLog("Enforcement started")
       BoundlyForegroundService.start(reactContext)
       promise.resolve(null)
     } catch (error: Exception) {
@@ -178,6 +180,7 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
       policyStore.setEnforcementEnabled(false)
       policyStore.clearBlockedPackages()
       policyStore.clearLastAccessibilityError()
+      policyStore.appendDebugLog("Enforcement stopped")
       BoundlyForegroundService.stop(reactContext)
       promise.resolve(null)
     } catch (error: Exception) {
@@ -276,6 +279,28 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
   }
 
   @ReactMethod
+  fun getDebugLogs(promise: Promise) {
+    try {
+      val logs = policyStore.getDebugLogs(40)
+      val logArray = Arguments.createArray()
+      logs.forEach { entry -> logArray.pushString(entry) }
+      promise.resolve(logArray)
+    } catch (error: Exception) {
+      promise.reject("GET_DEBUG_LOGS_ERROR", error)
+    }
+  }
+
+  @ReactMethod
+  fun clearDebugLogs(promise: Promise) {
+    try {
+      policyStore.clearDebugLogs()
+      promise.resolve(null)
+    } catch (error: Exception) {
+      promise.reject("CLEAR_DEBUG_LOGS_ERROR", error)
+    }
+  }
+
+  @ReactMethod
   fun addListener(eventName: String) {
     // Required by NativeEventEmitter.
   }
@@ -296,7 +321,17 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
   }
 
   private fun hasAccessibilityServiceEnabled(): Boolean {
-    val service = "${reactContext.packageName}/${BoundlyAccessibilityService::class.java.name}"
+    val packageName = reactContext.packageName
+    val serviceClassName = BoundlyAccessibilityService::class.java.name
+    val shortServiceClassName = if (serviceClassName.startsWith(packageName)) {
+      serviceClassName.removePrefix(packageName)
+    } else {
+      ".${serviceClassName.substringAfterLast('.')}"
+    }
+    val acceptedServiceNames = setOf(
+      "$packageName/$serviceClassName",
+      "$packageName/$shortServiceClassName"
+    )
     val enabledServices = Settings.Secure.getString(
       reactContext.contentResolver,
       Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
@@ -305,7 +340,9 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
     return !enabledServices.isNullOrEmpty() &&
       TextUtils.SimpleStringSplitter(':').run {
         setString(enabledServices)
-        any { item -> item.equals(service, ignoreCase = true) }
+        any { item ->
+          acceptedServiceNames.any { serviceName -> item.equals(serviceName, ignoreCase = true) }
+        }
       }
   }
 

@@ -12,6 +12,7 @@ class BoundlyBootReceiver : BroadcastReceiver() {
 
     val policyStore = BoundlyPolicyStore(context)
     if (policyStore.isEnforcementEnabled()) {
+      policyStore.appendDebugLog("Boot completed, restarting enforcement")
       BoundlyForegroundService.start(context)
     }
   }

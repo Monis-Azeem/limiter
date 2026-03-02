@@ -2,6 +2,7 @@ package com.boundly.app.enforcement
 
 import android.content.Context
 import org.json.JSONArray
+import java.time.Instant
 
 class BoundlyPolicyStore(private val context: Context) {
   private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -65,12 +66,57 @@ class BoundlyPolicyStore(private val context: Context) {
 
   fun setLastAccessibilityError(errorMessage: String?) {
     prefs.edit().putString(KEY_LAST_ACCESSIBILITY_ERROR, errorMessage).apply()
+    if (!errorMessage.isNullOrBlank()) {
+      appendDebugLog("Accessibility error: $errorMessage")
+    }
   }
 
   fun getLastAccessibilityError(): String? = prefs.getString(KEY_LAST_ACCESSIBILITY_ERROR, null)
 
   fun clearLastAccessibilityError() {
     prefs.edit().remove(KEY_LAST_ACCESSIBILITY_ERROR).apply()
+  }
+
+  fun appendDebugLog(message: String) {
+    val current = getDebugLogs(MAX_DEBUG_LOG_ENTRIES)
+    val next = current.toMutableList()
+    next.add("${Instant.now()} | $message")
+    val trimmed = if (next.size > MAX_DEBUG_LOG_ENTRIES) {
+      next.takeLast(MAX_DEBUG_LOG_ENTRIES)
+    } else {
+      next
+    }
+    saveDebugLogs(trimmed)
+  }
+
+  fun getDebugLogs(limit: Int = 30): List<String> {
+    val raw = prefs.getString(KEY_DEBUG_LOGS, "[]") ?: "[]"
+    val entries = mutableListOf<String>()
+    runCatching { JSONArray(raw) }
+      .getOrElse { JSONArray("[]") }
+      .let { jsonArray ->
+        for (index in 0 until jsonArray.length()) {
+          val entry = jsonArray.optString(index, "")
+          if (entry.isNotBlank()) {
+            entries.add(entry)
+          }
+        }
+      }
+
+    if (limit <= 0) {
+      return emptyList()
+    }
+    return entries.takeLast(limit).reversed()
+  }
+
+  fun clearDebugLogs() {
+    prefs.edit().putString(KEY_DEBUG_LOGS, "[]").apply()
+  }
+
+  private fun saveDebugLogs(entries: List<String>) {
+    val jsonArray = JSONArray()
+    entries.forEach { entry -> jsonArray.put(entry) }
+    prefs.edit().putString(KEY_DEBUG_LOGS, jsonArray.toString()).apply()
   }
 
   companion object {
@@ -82,5 +128,7 @@ class BoundlyPolicyStore(private val context: Context) {
     const val KEY_OVERRIDE_COUNT_TODAY = "override_count_today"
     const val KEY_LAST_OVERRIDE_AT_ISO = "last_override_at_iso"
     const val KEY_LAST_ACCESSIBILITY_ERROR = "last_accessibility_error"
+    const val KEY_DEBUG_LOGS = "debug_logs"
+    const val MAX_DEBUG_LOG_ENTRIES = 120
   }
 }

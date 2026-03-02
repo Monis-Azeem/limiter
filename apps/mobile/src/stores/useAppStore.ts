@@ -50,118 +50,60 @@ function normalizeTargetId(targetId: string): string {
   return LEGACY_TARGET_ID_MAP[token] ?? token;
 }
 
-function normalizeProfiles(profiles: RuleProfile[]): RuleProfile[] {
-  return profiles.map((profile) => {
-    const normalizedTargetIds = Array.from(
-      new Set(profile.targetAppIds.map(normalizeTargetId).filter((id) => id.length > 0))
-    );
+function toSimpleProfile(base?: RuleProfile): RuleProfile {
+  const normalizedTargetId = normalizeTargetId(
+    base?.targetAppIds[0] ?? DEFAULT_TARGET_PACKAGES[0] ?? "com.instagram.android"
+  );
+  const targetId =
+    normalizedTargetId.length > 0
+      ? normalizedTargetId
+      : (DEFAULT_TARGET_PACKAGES[0] ?? "com.instagram.android");
+  const dailyLimitMinutes = Math.max(1, base?.dailyLimitMinutes ?? 30);
+  const isAlreadySimple =
+    !!base &&
+    base.id === "daily-limit" &&
+    base.enabled &&
+    base.targetAppIds.length === 1 &&
+    base.targetAppIds[0] === targetId &&
+    base.windows.length === 0 &&
+    base.dailyLimitMinutes === dailyLimitMinutes &&
+    base.dailyOpenLimit === 9999 &&
+    base.frictionPolicy.intentRequired === false &&
+    base.frictionPolicy.delaySeconds === 0;
 
-    const nextTargetIds =
-      normalizedTargetIds.length > 0
-        ? normalizedTargetIds
-        : [DEFAULT_TARGET_PACKAGES[0] ?? "com.instagram.android"];
-    const unchanged =
-      nextTargetIds.length === profile.targetAppIds.length &&
-      nextTargetIds.every((targetId, index) => targetId === profile.targetAppIds[index]);
+  if (isAlreadySimple) {
+    return base;
+  }
 
-    if (unchanged) {
-      return profile;
+  const updatedAtIso = nowIso();
+  return {
+    id: "daily-limit",
+    name: "Daily limit",
+    revision: (base?.revision ?? 0) + 1,
+    updatedAtIso,
+    enabled: true,
+    targetAppIds: [targetId],
+    windows: [],
+    dailyLimitMinutes,
+    dailyOpenLimit: 9999,
+    overridePolicy: {
+      maxOverridesPerDay: 1,
+      penaltyMinutes: 15,
+      cooldownMinutes: 20
+    },
+    frictionPolicy: {
+      intentRequired: false,
+      delaySeconds: 0
     }
+  };
+}
 
-    return {
-      ...profile,
-      targetAppIds: nextTargetIds,
-      revision: profile.revision + 1,
-      updatedAtIso: nowIso()
-    };
-  });
+function normalizeProfiles(profiles: RuleProfile[]): RuleProfile[] {
+  return [toSimpleProfile(profiles[0])];
 }
 
 function createDefaultProfiles(): RuleProfile[] {
-  const updatedAtIso = nowIso();
-  return [
-    {
-      id: "work",
-      name: "Work",
-      revision: 1,
-      updatedAtIso,
-      enabled: true,
-      targetAppIds: DEFAULT_TARGET_PACKAGES,
-      windows: [
-        {
-          id: "work-window",
-          days: ["mon", "tue", "wed", "thu", "fri"],
-          startMinute: 9 * 60,
-          endMinute: 18 * 60
-        }
-      ],
-      dailyLimitMinutes: 45,
-      dailyOpenLimit: 8,
-      overridePolicy: {
-        maxOverridesPerDay: 1,
-        penaltyMinutes: 15,
-        cooldownMinutes: 20
-      },
-      frictionPolicy: {
-        intentRequired: true,
-        delaySeconds: 10
-      }
-    },
-    {
-      id: "sleep",
-      name: "Sleep",
-      revision: 1,
-      updatedAtIso,
-      enabled: true,
-      targetAppIds: DEFAULT_TARGET_PACKAGES,
-      windows: [
-        {
-          id: "sleep-window",
-          days: ["sun", "mon", "tue", "wed", "thu", "fri", "sat"],
-          startMinute: 22 * 60 + 30,
-          endMinute: 8 * 60
-        }
-      ],
-      dailyLimitMinutes: 15,
-      dailyOpenLimit: 3,
-      overridePolicy: {
-        maxOverridesPerDay: 1,
-        penaltyMinutes: 15,
-        cooldownMinutes: 20
-      },
-      frictionPolicy: {
-        intentRequired: true,
-        delaySeconds: 15
-      }
-    },
-    {
-      id: "deep-focus",
-      name: "Deep Focus",
-      revision: 1,
-      updatedAtIso,
-      enabled: true,
-      targetAppIds: DEFAULT_TARGET_PACKAGES,
-      windows: [
-        {
-          id: "focus-window",
-          days: ["sun", "mon", "tue", "wed", "thu", "fri", "sat"],
-          startMinute: 18 * 60,
-          endMinute: 22 * 60
-        }
-      ],
-      dailyLimitMinutes: 20,
-      dailyOpenLimit: 4,
-      overridePolicy: {
-        maxOverridesPerDay: 1,
-        penaltyMinutes: 15,
-        cooldownMinutes: 20
-      },
-      frictionPolicy: {
-        intentRequired: true,
-        delaySeconds: 20
-      }
-    }
-  ];
+  return [toSimpleProfile()];
 }
 
 function getProfileById(profiles: RuleProfile[], profileId: string): RuleProfile {
@@ -300,7 +242,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setDailyLimitMinutes: (minutes) => {
-    const nextLimit = Math.max(5, minutes);
+    const nextLimit = Math.max(1, minutes);
     set((state) => ({
       profiles: state.profiles.map((profile) =>
         profile.id === state.activeProfileId
@@ -494,11 +436,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const health = await enforcementService.getHealth();
 
-    if (health.status !== "permissions_missing") {
-      await enforcementService.startEnforcement(profiles);
-    }
-
-    const activeProfileId = profiles[0]?.id ?? "work";
+    const activeProfileId = profiles[0]?.id ?? "daily-limit";
     const selectedTargetId =
       profiles[0]?.targetAppIds[0] ?? DEFAULT_TARGET_PACKAGES[0] ?? "com.instagram.android";
 
