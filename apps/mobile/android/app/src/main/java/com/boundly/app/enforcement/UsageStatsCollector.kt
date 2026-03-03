@@ -118,6 +118,22 @@ class UsageStatsCollector(private val context: Context) {
     return records
   }
 
+  fun getLikelyForegroundPackage(targetPackages: Set<String>): String? {
+    if (targetPackages.isEmpty()) {
+      return null
+    }
+
+    val now = Instant.now().toEpochMilli()
+    val windowStart = now - (2 * 60_000L)
+    val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+    val stats = usageStatsManager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, windowStart, now)
+    return stats
+      .asSequence()
+      .filter { stat -> targetPackages.contains(stat.packageName) }
+      .maxByOrNull { stat -> stat.lastTimeUsed }
+      ?.packageName
+  }
+
   private fun isForegroundEvent(eventType: Int): Boolean {
     return eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
       eventType == UsageEvents.Event.ACTIVITY_RESUMED

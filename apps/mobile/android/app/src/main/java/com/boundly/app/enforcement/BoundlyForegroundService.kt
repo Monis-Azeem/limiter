@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.boundly.app.R
 import java.time.Instant
@@ -18,6 +19,9 @@ class BoundlyForegroundService : Service() {
   private val handler = Handler(Looper.getMainLooper())
   private lateinit var policyStore: BoundlyPolicyStore
   private lateinit var policyEvaluator: BoundlyPolicyEvaluator
+  private lateinit var usageStatsCollector: UsageStatsCollector
+  private var lastForcedLockPackage: String? = null
+  private var lastForcedLockAtMs: Long = 0L
 
   private val evaluateRunnable = object : Runnable {
     override fun run() {
@@ -32,6 +36,18 @@ class BoundlyForegroundService : Service() {
         val blockedPackages = policyEvaluator.evaluateBlockedPackagesNow()
         policyStore.setBlockedPackages(blockedPackages)
         policyStore.setLastHeartbeatIso(Instant.now().toString())
+
+        val foregroundPackage = usageStatsCollector.getLikelyForegroundPackage(blockedPackages)
+        if (!foregroundPackage.isNullOrBlank() && foregroundPackage != packageName) {
+          val nowMs = SystemClock.elapsedRealtime()
+          val isSamePackage = foregroundPackage == lastForcedLockPackage
+          val withinCooldown = nowMs - lastForcedLockAtMs < FORCE_LOCK_COOLDOWN_MS
+          if (!isSamePackage || !withinCooldown) {
+            launchLockScreen(foregroundPackage)
+            lastForcedLockPackage = foregroundPackage
+            lastForcedLockAtMs = nowMs
+          }
+        }
       } catch (error: Exception) {
         policyStore.appendDebugLog("Foreground service error: ${error.message ?: error.toString()}")
       }
@@ -43,7 +59,8 @@ class BoundlyForegroundService : Service() {
   override fun onCreate() {
     super.onCreate()
     policyStore = BoundlyPolicyStore(this)
-    policyEvaluator = BoundlyPolicyEvaluator(policyStore, UsageStatsCollector(this))
+    usageStatsCollector = UsageStatsCollector(this)
+    policyEvaluator = BoundlyPolicyEvaluator(policyStore, usageStatsCollector)
     policyStore.appendDebugLog("Foreground service created")
     ensureNotificationChannel()
   }
@@ -95,10 +112,24 @@ class BoundlyForegroundService : Service() {
       .build()
   }
 
+  private fun launchLockScreen(blockedPackage: String) {
+    runCatching {
+      val intent = Intent(this, BoundlyLockActivity::class.java).apply {
+        putExtra(BoundlyLockActivity.EXTRA_BLOCKED_PACKAGE, blockedPackage)
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+      }
+      startActivity(intent)
+      policyStore.appendDebugLog("Foreground watchdog forced lock for $blockedPackage")
+    }.onFailure { error ->
+      policyStore.appendDebugLog("Foreground watchdog lock error: ${error.message ?: error.toString()}")
+    }
+  }
+
   companion object {
     private const val CHANNEL_ID = "boundly_enforcement_channel"
     private const val NOTIFICATION_ID = 4401
     private const val HEARTBEAT_INTERVAL_MS = 10_000L
+    private const val FORCE_LOCK_COOLDOWN_MS = 8_000L
     const val ACTION_START = "com.boundly.app.enforcement.START"
     const val ACTION_STOP = "com.boundly.app.enforcement.STOP"
 
