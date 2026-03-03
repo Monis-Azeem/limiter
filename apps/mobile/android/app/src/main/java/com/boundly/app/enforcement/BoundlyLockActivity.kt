@@ -2,6 +2,9 @@ package com.boundly.app.enforcement
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -33,47 +36,77 @@ class BoundlyLockActivity : Activity() {
     super.onCreate(savedInstanceState)
 
     val blockedPackage = intent.getStringExtra(EXTRA_BLOCKED_PACKAGE) ?: "this app"
+    val blockedAppName = resolveAppLabel(blockedPackage)
     val reason = intent.getStringExtra(EXTRA_BLOCK_REASON) ?: "Daily limit reached"
     val quote = quoteRepository.nextQuote()
 
     val root = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
       gravity = Gravity.CENTER
-      setPadding(72, 72, 72, 72)
+      setPadding(56, 56, 56, 56)
+      background = GradientDrawable(
+        GradientDrawable.Orientation.TOP_BOTTOM,
+        intArrayOf(Color.parseColor("#EAF1FF"), Color.parseColor("#F6FBFF"))
+      )
+    }
+
+    val card = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.CENTER
+      setPadding(48, 52, 48, 52)
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = 28f
+        setColor(Color.WHITE)
+        setStroke(2, Color.parseColor("#E2E8F0"))
+      }
     }
 
     val title = TextView(this).apply {
-      text = "Take a short break"
-      textSize = 22f
+      text = "Time limit reached"
+      textSize = 24f
+      setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
       gravity = Gravity.CENTER
+      setTextColor(Color.parseColor("#0F172A"))
     }
 
     val appText = TextView(this).apply {
-      text = "$blockedPackage is blocked right now."
+      text = "$blockedAppName is blocked for now."
       textSize = 15f
       gravity = Gravity.CENTER
+      setTypeface(Typeface.create("sans-serif", Typeface.NORMAL))
+      setTextColor(Color.parseColor("#334155"))
+      setPadding(0, 12, 0, 0)
     }
 
     val reasonText = TextView(this).apply {
       text = reason
       textSize = 14f
       gravity = Gravity.CENTER
+      setTypeface(Typeface.create("sans-serif", Typeface.NORMAL))
+      setTextColor(Color.parseColor("#475569"))
+      setPadding(0, 8, 0, 12)
     }
 
     val quoteText = TextView(this).apply {
-      text = quote
-      textSize = 14f
+      text = "“$quote”"
+      textSize = 19f
       gravity = Gravity.CENTER
-      setPadding(0, 24, 0, 8)
+      setTypeface(Typeface.create("serif", Typeface.ITALIC))
+      setTextColor(Color.parseColor("#0F172A"))
+      setPadding(0, 16, 0, 22)
     }
 
     countdownText = TextView(this).apply {
       textSize = 13f
       gravity = Gravity.CENTER
+      setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+      setTextColor(Color.parseColor("#2563EB"))
     }
 
     val openBoundlyButton = Button(this).apply {
       text = "Open Boundly"
+      setAllCaps(false)
       setOnClickListener {
         handler.removeCallbacks(countdownRunnable)
         val appIntent = Intent(this@BoundlyLockActivity, MainActivity::class.java).apply {
@@ -84,12 +117,13 @@ class BoundlyLockActivity : Activity() {
       }
     }
 
-    root.addView(title)
-    root.addView(appText)
-    root.addView(reasonText)
-    root.addView(quoteText)
-    root.addView(countdownText)
-    root.addView(openBoundlyButton)
+    card.addView(title)
+    card.addView(appText)
+    card.addView(reasonText)
+    card.addView(quoteText)
+    card.addView(countdownText)
+    card.addView(openBoundlyButton)
+    root.addView(card)
     setContentView(root)
     handler.post(countdownRunnable)
   }
@@ -106,6 +140,13 @@ class BoundlyLockActivity : Activity() {
     }
     startActivity(homeIntent)
     finish()
+  }
+
+  private fun resolveAppLabel(packageName: String): String {
+    return runCatching {
+      val appInfo = packageManager.getApplicationInfo(packageName, 0)
+      packageManager.getApplicationLabel(appInfo).toString()
+    }.getOrDefault(packageName)
   }
 
   companion object {

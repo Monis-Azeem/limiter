@@ -259,14 +259,21 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
     try {
       val apps = queryLaunchableUserApps()
       val packageIds = apps.map { app -> app.packageName }.toSet()
-      val minutesByPackage = usageStatsCollector.collectRawDailyMinutes(packageIds)
+      val rawMinutesByPackage = usageStatsCollector.collectRawDailyMinutes(packageIds)
       val blockedPackages = policyStore.getBlockedPackages()
       val dailyLimitByPackage = parseDailyLimitByPackage(policyStore.getProfilesJson())
+      val managedMinutesByPackage = usageStatsCollector
+        .collectDailySnapshot(dailyLimitByPackage.keys)
+        .minutesByPackage
 
       val result = Arguments.createArray()
       apps.forEach { app ->
-        val minutesUsedToday = minutesByPackage[app.packageName] ?: 0
         val dailyLimitMinutes = dailyLimitByPackage[app.packageName]
+        val minutesUsedToday = if (dailyLimitMinutes != null) {
+          managedMinutesByPackage[app.packageName] ?: 0
+        } else {
+          rawMinutesByPackage[app.packageName] ?: 0
+        }
         val remainingMinutes = dailyLimitMinutes?.let { limit ->
           (limit - minutesUsedToday).coerceAtLeast(0)
         }

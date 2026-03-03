@@ -30,6 +30,8 @@ const DEFAULT_TARGET_PACKAGES = [
   "com.linkedin.android",
   "com.whatsapp"
 ];
+const DEFAULT_TARGET_ID = DEFAULT_TARGET_PACKAGES[0] ?? "com.instagram.android";
+const DEFAULT_DAILY_LIMIT_MINUTES = 30;
 
 const LEGACY_TARGET_ID_MAP: Record<string, string> = {
   instagram: "com.instagram.android",
@@ -51,18 +53,21 @@ function normalizeTargetId(targetId: string): string {
   return LEGACY_TARGET_ID_MAP[token] ?? token;
 }
 
-function toSimpleProfile(base?: RuleProfile): RuleProfile {
-  const normalizedTargetId = normalizeTargetId(
-    base?.targetAppIds[0] ?? DEFAULT_TARGET_PACKAGES[0] ?? "com.instagram.android"
-  );
+function profileIdForTarget(targetId: string): string {
+  return `daily-limit:${targetId}`;
+}
+
+function toSimpleProfile(targetIdInput: string, base?: RuleProfile): RuleProfile {
+  const normalizedTargetId = normalizeTargetId(targetIdInput);
   const targetId =
     normalizedTargetId.length > 0
       ? normalizedTargetId
-      : (DEFAULT_TARGET_PACKAGES[0] ?? "com.instagram.android");
-  const dailyLimitMinutes = Math.max(1, base?.dailyLimitMinutes ?? 30);
+      : DEFAULT_TARGET_ID;
+  const dailyLimitMinutes = Math.max(1, base?.dailyLimitMinutes ?? DEFAULT_DAILY_LIMIT_MINUTES);
+  const profileId = profileIdForTarget(targetId);
   const isAlreadySimple =
     !!base &&
-    base.id === "daily-limit" &&
+    base.id === profileId &&
     base.enabled &&
     base.targetAppIds.length === 1 &&
     base.targetAppIds[0] === targetId &&
@@ -78,7 +83,7 @@ function toSimpleProfile(base?: RuleProfile): RuleProfile {
 
   const updatedAtIso = nowIso();
   return {
-    id: "daily-limit",
+    id: profileId,
     name: "Daily limit",
     revision: (base?.revision ?? 0) + 1,
     updatedAtIso,
@@ -99,26 +104,91 @@ function toSimpleProfile(base?: RuleProfile): RuleProfile {
   };
 }
 
+function createSimpleProfile(targetIdInput: string, dailyLimitMinutes: number): RuleProfile {
+  const targetId = normalizeTargetId(targetIdInput) || DEFAULT_TARGET_ID;
+  return toSimpleProfile(targetId, {
+    id: profileIdForTarget(targetId),
+    name: "Daily limit",
+    revision: 0,
+    updatedAtIso: nowIso(),
+    enabled: true,
+    targetAppIds: [targetId],
+    windows: [],
+    dailyLimitMinutes: Math.max(1, dailyLimitMinutes),
+    dailyOpenLimit: 9999,
+    overridePolicy: {
+      maxOverridesPerDay: 1,
+      penaltyMinutes: 15,
+      cooldownMinutes: 20
+    },
+    frictionPolicy: {
+      intentRequired: false,
+      delaySeconds: 0
+    }
+  });
+}
+
 function normalizeProfiles(profiles: RuleProfile[]): RuleProfile[] {
-  return [toSimpleProfile(profiles[0])];
+  if (profiles.length === 0) {
+    return [];
+  }
+
+  const byTarget = new Map<string, RuleProfile>();
+  profiles.forEach((profile) => {
+    const targetIds = profile.targetAppIds.length > 0 ? profile.targetAppIds : [DEFAULT_TARGET_ID];
+    targetIds.forEach((rawTargetId) => {
+      const targetId = normalizeTargetId(rawTargetId);
+      if (!targetId) {
+        return;
+      }
+
+      const existing = byTarget.get(targetId);
+      const dailyLimitMinutes = Math.max(
+        1,
+        existing ? Math.min(existing.dailyLimitMinutes, profile.dailyLimitMinutes) : profile.dailyLimitMinutes
+      );
+      byTarget.set(
+        targetId,
+        toSimpleProfile(targetId, {
+          ...profile,
+          dailyLimitMinutes
+        })
+      );
+    });
+  });
+
+  return [...byTarget.values()].sort((a, b) => a.targetAppIds[0]!.localeCompare(b.targetAppIds[0]!));
 }
 
 function createDefaultProfiles(): RuleProfile[] {
-  return [toSimpleProfile()];
+  return [];
 }
 
-function getProfileById(profiles: RuleProfile[], profileId: string): RuleProfile {
-  return profiles.find((profile) => profile.id === profileId) ?? profiles[0]!;
+function getProfileById(profiles: RuleProfile[], profileId: string): RuleProfile | undefined {
+  return profiles.find((profile) => profile.id === profileId);
+}
+
+function getProfileByTargetId(profiles: RuleProfile[], targetId: string): RuleProfile | undefined {
+  return profiles.find((profile) => profile.targetAppIds.includes(targetId));
 }
 
 function calculateDecision(
-  profile: RuleProfile,
+  profile: RuleProfile | undefined,
   usage: UsageSnapshot,
   selectedTargetId: string,
   intentConfirmed: boolean,
   delaySatisfied: boolean,
   health?: EnforcementHealth
 ): EnforcementDecision {
+  if (!profile) {
+    return {
+      kind: "allow",
+      reason: "target_not_managed",
+      remainingMinutes: 0,
+      remainingOpens: 0
+    };
+  }
+
   const input = {
     nowIso: nowIso(),
     targetAppId: selectedTargetId,
@@ -159,6 +229,7 @@ interface AppState {
   setActiveTab: (tab: AppTab) => void;
   setActiveProfile: (profileId: string) => void;
   setSelectedTargetId: (targetId: string) => void;
+  removeTargetFromEnforcement: (targetId?: string) => Promise<void>;
   setDailyLimitMinutes: (minutes: number) => void;
   setDailyOpenLimit: (opens: number) => void;
   confirmIntent: () => void;
@@ -184,9 +255,9 @@ const initialHealth: EnforcementHealth = {
   missingPermissions: []
 };
 const initialDecision = calculateDecision(
-  defaultProfiles[0]!,
+  undefined,
   initialUsage,
-  "com.instagram.android",
+  DEFAULT_TARGET_ID,
   false,
   false,
   initialHealth
@@ -195,8 +266,8 @@ const initialDecision = calculateDecision(
 export const useAppStore = create<AppState>((set, get) => ({
   activeTab: "onboarding",
   profiles: defaultProfiles,
-  activeProfileId: defaultProfiles[0]!.id,
-  selectedTargetId: "com.instagram.android",
+  activeProfileId: "",
+  selectedTargetId: DEFAULT_TARGET_ID,
   usage: initialUsage,
   permissionsGranted: false,
   permissionStates: [],
@@ -211,8 +282,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActiveTab: (tab) => set({ activeTab: tab }),
 
   setActiveProfile: (profileId) => {
+    const activeProfile = getProfileById(get().profiles, profileId);
     set({
       activeProfileId: profileId,
+      selectedTargetId: activeProfile?.targetAppIds[0] ?? get().selectedTargetId,
       intentConfirmed: false,
       delaySatisfied: false
     });
@@ -220,45 +293,77 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setSelectedTargetId: (targetId) => {
+    const normalizedTargetId = normalizeTargetId(targetId);
+    const matchedProfile = getProfileByTargetId(get().profiles, normalizedTargetId);
     set((state) => ({
-      selectedTargetId: targetId,
+      selectedTargetId: normalizedTargetId || state.selectedTargetId,
+      activeProfileId: matchedProfile?.id ?? state.activeProfileId,
       intentConfirmed: false,
-      delaySatisfied: false,
-      profiles: state.profiles.map((profile) =>
-        profile.id === state.activeProfileId
-          ? {
-              ...profile,
-              targetAppIds: [targetId],
-              revision: profile.revision + 1,
-              updatedAtIso: nowIso()
-            }
-          : profile
-      )
+      delaySatisfied: false
     }));
+    get().recomputeDecision();
+  },
+
+  removeTargetFromEnforcement: async (targetId) => {
+    const target = normalizeTargetId(targetId ?? get().selectedTargetId);
+    if (!target) {
+      return;
+    }
+
+    set((state) => {
+      const nextProfiles = state.profiles.filter((profile) => !profile.targetAppIds.includes(target));
+      const selectedProfile = getProfileByTargetId(nextProfiles, state.selectedTargetId);
+      return {
+        profiles: nextProfiles,
+        activeProfileId: selectedProfile?.id ?? nextProfiles[0]?.id ?? "",
+        intentConfirmed: false,
+        delaySatisfied: false
+      };
+    });
 
     const state = get();
     const repository = getProfileRepository();
-    void repository
-      .replaceProfiles(state.profiles)
-      .then(() => enforcementService.syncRules(state.profiles));
-
+    await repository.replaceProfiles(state.profiles);
+    await enforcementService.syncRules(state.profiles);
+    await get().refreshLiveUsage();
     get().recomputeDecision();
   },
 
   setDailyLimitMinutes: (minutes) => {
+    const targetId = normalizeTargetId(get().selectedTargetId);
+    if (!targetId) {
+      return;
+    }
     const nextLimit = Math.max(1, minutes);
-    set((state) => ({
-      profiles: state.profiles.map((profile) =>
-        profile.id === state.activeProfileId
-          ? {
-              ...profile,
-              dailyLimitMinutes: nextLimit,
-              revision: profile.revision + 1,
-              updatedAtIso: nowIso()
-            }
-          : profile
-      )
-    }));
+
+    set((state) => {
+      const existingProfile = getProfileByTargetId(state.profiles, targetId);
+      if (existingProfile) {
+        return {
+          profiles: state.profiles.map((profile) =>
+            profile.id === existingProfile.id
+              ? {
+                  ...profile,
+                  dailyLimitMinutes: nextLimit,
+                  revision: profile.revision + 1,
+                  updatedAtIso: nowIso()
+                }
+              : profile
+          ),
+          activeProfileId: existingProfile.id,
+          intentConfirmed: false,
+          delaySatisfied: false
+        };
+      }
+
+      const nextProfile = createSimpleProfile(targetId, nextLimit);
+      return {
+        profiles: [...state.profiles, nextProfile],
+        activeProfileId: nextProfile.id,
+        intentConfirmed: false,
+        delaySatisfied: false
+      };
+    });
 
     const state = get();
     const repository = getProfileRepository();
@@ -271,18 +376,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setDailyOpenLimit: (opens) => {
     const nextLimit = Math.max(1, opens);
-    set((state) => ({
-      profiles: state.profiles.map((profile) =>
-        profile.id === state.activeProfileId
-          ? {
-              ...profile,
-              dailyOpenLimit: nextLimit,
-              revision: profile.revision + 1,
-              updatedAtIso: nowIso()
-            }
-          : profile
-      )
-    }));
+    const targetId = normalizeTargetId(get().selectedTargetId);
+    if (!targetId) {
+      return;
+    }
+    set((state) => {
+      const existingProfile = getProfileByTargetId(state.profiles, targetId);
+      if (!existingProfile) {
+        return {};
+      }
+      return {
+        profiles: state.profiles.map((profile) =>
+          profile.id === existingProfile.id
+            ? {
+                ...profile,
+                dailyOpenLimit: nextLimit,
+                revision: profile.revision + 1,
+                updatedAtIso: nowIso()
+              }
+            : profile
+        )
+      };
+    });
 
     const state = get();
     const repository = getProfileRepository();
@@ -364,7 +479,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   useEmergencyOverride: async () => {
     const state = get();
-    const activeProfile = getProfileById(state.profiles, state.activeProfileId);
+    const activeProfile =
+      getProfileByTargetId(state.profiles, state.selectedTargetId) ??
+      getProfileById(state.profiles, state.activeProfileId);
+    if (!activeProfile) {
+      return;
+    }
     if (state.usage.overridesUsedToday >= activeProfile.overridePolicy.maxOverridesPerDay) {
       return;
     }
@@ -402,15 +522,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   bootstrap: async () => {
     const repository = getProfileRepository();
 
-    let profiles = await repository.getProfiles();
-    if (profiles.length === 0) {
-      profiles = createDefaultProfiles();
-      await repository.replaceProfiles(profiles);
-    }
-
-    const normalizedProfiles = normalizeProfiles(profiles);
-    if (JSON.stringify(normalizedProfiles) !== JSON.stringify(profiles)) {
-      profiles = normalizedProfiles;
+    const storedProfiles = await repository.getProfiles();
+    let profiles = normalizeProfiles(storedProfiles);
+    if (JSON.stringify(profiles) !== JSON.stringify(storedProfiles)) {
       await repository.replaceProfiles(profiles);
     }
 
@@ -440,9 +554,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const health = await enforcementService.getHealth();
 
-    const activeProfileId = profiles[0]?.id ?? "daily-limit";
+    const activeProfileId = profiles[0]?.id ?? "";
     const selectedTargetId =
-      profiles[0]?.targetAppIds[0] ?? DEFAULT_TARGET_PACKAGES[0] ?? "com.instagram.android";
+      profiles[0]?.targetAppIds[0] ?? DEFAULT_TARGET_ID;
 
     set({
       profiles,
@@ -554,7 +668,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   recomputeDecision: () => {
     const state = get();
-    const activeProfile = getProfileById(state.profiles, state.activeProfileId);
+    const activeProfile =
+      getProfileByTargetId(state.profiles, state.selectedTargetId) ??
+      getProfileById(state.profiles, state.activeProfileId);
     const decision = calculateDecision(
       activeProfile,
       state.usage,

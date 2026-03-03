@@ -46,7 +46,6 @@ function AppContainer(): React.JSX.Element {
 
   const {
     profiles,
-    activeProfileId,
     selectedTargetId,
     permissionStates,
     permissionsGranted,
@@ -57,6 +56,7 @@ function AppContainer(): React.JSX.Element {
     requestPermission,
     refreshPermissions,
     setSelectedTargetId,
+    removeTargetFromEnforcement,
     setDailyLimitMinutes,
     startEnforcement,
     stopEnforcement,
@@ -64,14 +64,30 @@ function AppContainer(): React.JSX.Element {
     refreshLiveUsage
   } = useAppStore();
 
-  const profile = useMemo(
-    () => profiles.find((item) => item.id === activeProfileId) ?? profiles[0],
-    [activeProfileId, profiles]
+  const profileByTargetId = useMemo(() => {
+    const map = new Map<string, (typeof profiles)[number]>();
+    profiles.forEach((profile) => {
+      const targetId = profile.targetAppIds[0];
+      if (targetId) {
+        map.set(targetId, profile);
+      }
+    });
+    return map;
+  }, [profiles]);
+
+  const selectedProfile = useMemo(
+    () => profileByTargetId.get(selectedTargetId),
+    [profileByTargetId, selectedTargetId]
   );
 
   const selectedApp = useMemo(
     () => managedApps.find((app) => app.id === selectedTargetId),
     [managedApps, selectedTargetId]
+  );
+
+  const enforcedTargetIds = useMemo(
+    () => new Set(profiles.flatMap((profile) => profile.targetAppIds)),
+    [profiles]
   );
 
   const permissionRows = useMemo(
@@ -203,7 +219,7 @@ function AppContainer(): React.JSX.Element {
   };
 
   const onStart = async () => {
-    if (!permissionsGranted || !profile || !selectedTargetId) {
+    if (!permissionsGranted || profiles.length === 0 || !selectedTargetId) {
       return;
     }
     setStarting(true);
@@ -231,8 +247,8 @@ function AppContainer(): React.JSX.Element {
     }
   };
 
-  const currentLimit = profile?.dailyLimitMinutes ?? 30;
-  const canStart = permissionsGranted && !!selectedTargetId;
+  const currentLimit = selectedProfile?.dailyLimitMinutes ?? 15;
+  const canStart = permissionsGranted && profiles.length > 0;
 
   return (
     <Screen>
@@ -297,6 +313,7 @@ function AppContainer(): React.JSX.Element {
           <View style={styles.appList}>
             {filteredManagedApps.slice(0, 120).map((app) => {
               const selected = app.id === selectedTargetId;
+              const enforced = enforcedTargetIds.has(app.id);
               return (
                 <Pressable
                   key={app.id}
@@ -306,7 +323,10 @@ function AppContainer(): React.JSX.Element {
                   <Text style={[styles.appRowText, selected ? styles.appRowTextActive : undefined]}>
                     {app.displayName}
                   </Text>
-                  {selected ? <Text style={styles.appRowBadge}>Selected</Text> : null}
+                  <View style={styles.appBadges}>
+                    {enforced ? <Text style={styles.appRowBadge}>Enforced</Text> : null}
+                    {selected ? <Text style={styles.appRowBadgeMuted}>Selected</Text> : null}
+                  </View>
                 </Pressable>
               );
             })}
@@ -318,11 +338,30 @@ function AppContainer(): React.JSX.Element {
         <Text style={styles.stepTitle}>Step 3: Set daily limit</Text>
         <Text style={styles.helper}>App: {selectedApp?.displayName ?? selectedTargetId ?? "Select an app"}</Text>
         <Text style={styles.limitText}>{currentLimit} min / day</Text>
+        <Text style={styles.helper}>
+          {selectedProfile ? "This app is currently enforced." : "Not enforced yet. Add it with a limit."}
+        </Text>
         <View style={styles.limitRow}>
           <Button label="-5m" variant="secondary" onPress={() => setDailyLimitMinutes(currentLimit - 5)} />
           <Button label="-1m" variant="secondary" onPress={() => setDailyLimitMinutes(currentLimit - 1)} />
           <Button label="+1m" variant="secondary" onPress={() => setDailyLimitMinutes(currentLimit + 1)} />
           <Button label="+5m" variant="secondary" onPress={() => setDailyLimitMinutes(currentLimit + 5)} />
+        </View>
+        <View style={styles.startRow}>
+          <Button
+            label={selectedProfile ? "Update limit" : "Add to enforcement"}
+            variant="primary"
+            onPress={() => setDailyLimitMinutes(currentLimit)}
+          />
+          {selectedProfile ? (
+            <Button
+              label="Remove app"
+              variant="secondary"
+              onPress={() => {
+                void removeTargetFromEnforcement(selectedTargetId);
+              }}
+            />
+          ) : null}
         </View>
       </Card>
 
@@ -353,7 +392,55 @@ function AppContainer(): React.JSX.Element {
             }}
           />
         </View>
+        {profiles.length === 0 ? <Text style={styles.helper}>Add at least one app to enforcement first.</Text> : null}
         {!isBootstrapped ? <Text style={styles.helper}>Loading setup...</Text> : null}
+      </Card>
+
+      <Card>
+        <Text style={styles.stepTitle}>Managed apps</Text>
+        {profiles.length === 0 ? (
+          <Text style={styles.helper}>No apps enforced yet.</Text>
+        ) : (
+          <View style={styles.liveList}>
+            {profiles.map((profileItem) => {
+              const targetId = profileItem.targetAppIds[0]!;
+              const appLabel = managedApps.find((app) => app.id === targetId)?.displayName ?? targetId;
+              return (
+                <View key={profileItem.id} style={styles.liveRow}>
+                  <View style={styles.liveMain}>
+                    <Text style={styles.liveTitle}>{appLabel}</Text>
+                    <Text style={styles.helper}>{profileItem.dailyLimitMinutes} min / day</Text>
+                  </View>
+                  <View style={styles.managedActions}>
+                    <Button
+                      label="-1m"
+                      variant="secondary"
+                      onPress={() => {
+                        setSelectedTargetId(targetId);
+                        setDailyLimitMinutes(profileItem.dailyLimitMinutes - 1);
+                      }}
+                    />
+                    <Button
+                      label="+1m"
+                      variant="secondary"
+                      onPress={() => {
+                        setSelectedTargetId(targetId);
+                        setDailyLimitMinutes(profileItem.dailyLimitMinutes + 1);
+                      }}
+                    />
+                    <Button
+                      label="Remove"
+                      variant="secondary"
+                      onPress={() => {
+                        void removeTargetFromEnforcement(targetId);
+                      }}
+                    />
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
       </Card>
 
       <Card>
@@ -375,7 +462,7 @@ function AppContainer(): React.JSX.Element {
             {filteredLiveUsage.slice(0, 160).map((row) => {
               const status = row.blockedNow ? "Blocked" : row.enforced ? "Live" : "Not managed";
               const usageText = row.enforced && row.dailyLimitMinutes !== undefined
-                ? `${row.minutesUsedToday} / ${row.dailyLimitMinutes} min`
+                ? `${row.minutesUsedToday} / ${row.dailyLimitMinutes} min (${Math.max(0, row.dailyLimitMinutes - row.minutesUsedToday)} left)`
                 : `${row.minutesUsedToday} min`;
               return (
                 <View key={row.appId} style={styles.liveRow}>
@@ -495,10 +582,20 @@ const styles = StyleSheet.create({
   appRowTextActive: {
     fontWeight: "600"
   },
+  appBadges: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs
+  },
   appRowBadge: {
     ...typography.caption,
     color: colors.success,
     fontWeight: "700"
+  },
+  appRowBadgeMuted: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: "600"
   },
   helper: {
     ...typography.caption,
@@ -578,6 +675,12 @@ const styles = StyleSheet.create({
   logButtons: {
     flexDirection: "row",
     gap: spacing.sm
+  },
+  managedActions: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    flexWrap: "wrap",
+    justifyContent: "flex-end"
   },
   logLine: {
     fontSize: 12,

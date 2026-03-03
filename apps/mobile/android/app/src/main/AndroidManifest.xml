@@ -42,7 +42,7 @@
       android:excludeFromRecents="true"
       android:exported="false"
       android:launchMode="singleTask"
-      android:theme="@style/Theme.App.SplashScreen" />
+      android:theme="@style/AppTheme" />
     <service
       android:name=".enforcement.BoundlyForegroundService"
       android:exported="false"

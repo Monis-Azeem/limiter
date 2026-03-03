@@ -4,12 +4,15 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import java.time.LocalDate
 
 class BoundlyAccessibilityService : AccessibilityService() {
+  private val mainHandler = Handler(Looper.getMainLooper())
   private val policyStore by lazy { BoundlyPolicyStore(this) }
   private val usageStatsCollector by lazy { UsageStatsCollector(this, policyStore) }
   private val policyEvaluator by lazy {
@@ -87,7 +90,7 @@ class BoundlyAccessibilityService : AccessibilityService() {
       lastInterventionAtMs = nowMs
       performHomeAction(nowMs)
       policyStore.appendDebugLog("Blocked launch intercepted: $packageName")
-      launchLockScreen(packageName, blockReason)
+      launchLockScreenDelayed(packageName, blockReason)
     } catch (error: Exception) {
       policyStore.setLastAccessibilityError(error.message ?: error.toString())
       Log.e(TAG, "Accessibility event handling failed", error)
@@ -174,10 +177,18 @@ class BoundlyAccessibilityService : AccessibilityService() {
     }
   }
 
+  private fun launchLockScreenDelayed(blockedPackage: String, reason: String) {
+    mainHandler.postDelayed(
+      { launchLockScreen(blockedPackage, reason) },
+      LOCK_SCREEN_DELAY_MS
+    )
+  }
+
   companion object {
     private const val TAG = "BoundlyAccessibility"
     private const val LOCK_INTERVENTION_COOLDOWN_MS = 1_300L
     private const val HOME_ACTION_COOLDOWN_MS = 900L
     private const val POLICY_SYNC_COOLDOWN_MS = 1_000L
+    private const val LOCK_SCREEN_DELAY_MS = 180L
   }
 }
