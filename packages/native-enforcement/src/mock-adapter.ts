@@ -1,6 +1,7 @@
 import type {
   AppTarget,
   EnforcementHealth,
+  LiveAppUsageRow,
   PermissionKey,
   PermissionState,
   RuleProfile,
@@ -113,6 +114,29 @@ export class MockNativeEnforcementAdapter implements NativeEnforcementAdapter {
 
   async getUsageSnapshot(): Promise<UsageSnapshot> {
     return this.usage;
+  }
+
+  async getLiveAppUsage(): Promise<LiveAppUsageRow[]> {
+    const profile = this.profiles[0];
+    const managedTarget = profile?.targetAppIds[0];
+    const dailyLimitMinutes = profile?.dailyLimitMinutes;
+    return MOCK_APPS.map((app) => {
+      const minutesUsedToday = this.usage.minutesByTarget[app.id] ?? 0;
+      const enforced = managedTarget === app.id;
+      const row: LiveAppUsageRow = {
+        appId: app.id,
+        displayName: app.displayName,
+        platformPackageId: app.platformPackageId,
+        minutesUsedToday,
+        enforced,
+        blockedNow: enforced && dailyLimitMinutes !== undefined && minutesUsedToday >= dailyLimitMinutes
+      };
+      if (enforced && dailyLimitMinutes !== undefined) {
+        row.dailyLimitMinutes = dailyLimitMinutes;
+        row.remainingMinutes = Math.max(0, dailyLimitMinutes - minutesUsedToday);
+      }
+      return row;
+    });
   }
 
   async streamUsageEvents(): Promise<UsageEvent[]> {

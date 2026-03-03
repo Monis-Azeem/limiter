@@ -33,9 +33,11 @@ class BoundlyForegroundService : Service() {
           return
         }
 
-        val blockedPackages = policyEvaluator.evaluateBlockedPackagesNow()
-        policyStore.setBlockedPackages(blockedPackages)
+        val blockedReasons = policyEvaluator.evaluateBlockedReasonMapNow()
+        val blockedPackages = blockedReasons.keys
+        policyStore.setBlockedPackages(blockedPackages, blockedReasons)
         policyStore.setLastHeartbeatIso(Instant.now().toString())
+        policyStore.appendDebugLog("Watchdog heartbeat: blocked=${blockedPackages.size}")
 
         val foregroundPackage = usageStatsCollector.getLikelyForegroundPackage(blockedPackages)
         if (!foregroundPackage.isNullOrBlank() && foregroundPackage != packageName) {
@@ -59,7 +61,7 @@ class BoundlyForegroundService : Service() {
   override fun onCreate() {
     super.onCreate()
     policyStore = BoundlyPolicyStore(this)
-    usageStatsCollector = UsageStatsCollector(this)
+    usageStatsCollector = UsageStatsCollector(this, policyStore)
     policyEvaluator = BoundlyPolicyEvaluator(policyStore, usageStatsCollector)
     policyStore.appendDebugLog("Foreground service created")
     ensureNotificationChannel()
@@ -116,6 +118,10 @@ class BoundlyForegroundService : Service() {
     runCatching {
       val intent = Intent(this, BoundlyLockActivity::class.java).apply {
         putExtra(BoundlyLockActivity.EXTRA_BLOCKED_PACKAGE, blockedPackage)
+        putExtra(
+          BoundlyLockActivity.EXTRA_BLOCK_REASON,
+          policyStore.getBlockedReason(blockedPackage) ?: "Daily limit reached"
+        )
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
       }
       startActivity(intent)
@@ -128,8 +134,8 @@ class BoundlyForegroundService : Service() {
   companion object {
     private const val CHANNEL_ID = "boundly_enforcement_channel"
     private const val NOTIFICATION_ID = 4401
-    private const val HEARTBEAT_INTERVAL_MS = 10_000L
-    private const val FORCE_LOCK_COOLDOWN_MS = 8_000L
+    private const val HEARTBEAT_INTERVAL_MS = 3_500L
+    private const val FORCE_LOCK_COOLDOWN_MS = 4_000L
     const val ACTION_START = "com.boundly.app.enforcement.START"
     const val ACTION_STOP = "com.boundly.app.enforcement.STOP"
 

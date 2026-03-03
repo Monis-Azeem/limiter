@@ -123,4 +123,23 @@ describe("evaluatePolicy", () => {
     expect(decision.kind).toBe("block");
     expect(decision.reason).toBe("time_limit_reached");
   });
+
+  it("ignores open-count for enforcement in v1.1.x", () => {
+    const usage = createEmptyUsageSnapshot();
+    usage.opensByTarget.instagram = 500;
+
+    const decision = evaluatePolicy({
+      nowIso: localIso(14, 0),
+      targetAppId: "instagram",
+      profile: buildProfile(),
+      usage,
+      attempt: {
+        intentConfirmed: true,
+        delaySatisfied: true
+      }
+    });
+
+    expect(decision.kind).toBe("allow");
+    expect(decision.reason).toBe("within_limits");
+  });
 });

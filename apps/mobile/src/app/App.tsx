@@ -1,7 +1,7 @@
 import type { AppTarget, PermissionKey } from "@boundly/domain";
 import { Button, Card, Screen, colors, spacing } from "@boundly/ui-kit";
 import React, { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { enforcementService } from "../services/enforcement-service";
 import { useAppStore } from "../stores/useAppStore";
@@ -42,6 +42,7 @@ function AppContainer(): React.JSX.Element {
   const [busyPermissionKey, setBusyPermissionKey] = useState<PermissionKey | null>(null);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [appQuery, setAppQuery] = useState("");
 
   const {
     profiles,
@@ -51,13 +52,16 @@ function AppContainer(): React.JSX.Element {
     permissionsGranted,
     health,
     isBootstrapped,
+    liveUsage,
     bootstrap,
     requestPermission,
     refreshPermissions,
     setSelectedTargetId,
     setDailyLimitMinutes,
     startEnforcement,
-    stopEnforcement
+    stopEnforcement,
+    syncFromNativeUsage,
+    refreshLiveUsage
   } = useAppStore();
 
   const profile = useMemo(
@@ -82,6 +86,22 @@ function AppContainer(): React.JSX.Element {
       }),
     [permissionStates]
   );
+
+  const filteredManagedApps = useMemo(() => {
+    const query = appQuery.trim().toLowerCase();
+    if (!query) {
+      return managedApps;
+    }
+    return managedApps.filter((app) => app.displayName.toLowerCase().includes(query));
+  }, [appQuery, managedApps]);
+
+  const filteredLiveUsage = useMemo(() => {
+    const query = appQuery.trim().toLowerCase();
+    if (!query) {
+      return liveUsage;
+    }
+    return liveUsage.filter((row) => row.displayName.toLowerCase().includes(query));
+  }, [appQuery, liveUsage]);
 
   useEffect(() => {
     let mounted = true;
@@ -116,13 +136,26 @@ function AppContainer(): React.JSX.Element {
           setLoadingLogs(false);
         }
       }
+
+      await refreshLiveUsage();
     };
 
     void initialize();
     return () => {
       mounted = false;
     };
-  }, [bootstrap, refreshPermissions, setSelectedTargetId]);
+  }, [bootstrap, refreshPermissions, refreshLiveUsage, setSelectedTargetId]);
+
+  useEffect(() => {
+    if (!isBootstrapped) {
+      return;
+    }
+    const interval = setInterval(() => {
+      void syncFromNativeUsage();
+      void refreshLiveUsage();
+    }, 12_000);
+    return () => clearInterval(interval);
+  }, [isBootstrapped, refreshLiveUsage, syncFromNativeUsage]);
 
   const refreshLogs = async () => {
     setLoadingLogs(true);
@@ -152,6 +185,7 @@ function AppContainer(): React.JSX.Element {
       if (apps.length > 0 && !apps.some((app) => app.id === selectedTargetId)) {
         setSelectedTargetId(apps[0]!.id);
       }
+      await refreshLiveUsage();
     } finally {
       setLoadingApps(false);
     }
@@ -176,6 +210,8 @@ function AppContainer(): React.JSX.Element {
     try {
       await startEnforcement();
       await refreshPermissions();
+      await syncFromNativeUsage();
+      await refreshLiveUsage();
       await refreshLogs();
     } finally {
       setStarting(false);
@@ -187,6 +223,8 @@ function AppContainer(): React.JSX.Element {
     try {
       await stopEnforcement();
       await refreshPermissions();
+      await syncFromNativeUsage();
+      await refreshLiveUsage();
       await refreshLogs();
     } finally {
       setStopping(false);
@@ -200,7 +238,7 @@ function AppContainer(): React.JSX.Element {
     <Screen>
       <View style={styles.header}>
         <Text style={typography.title}>Boundly</Text>
-        <Text style={styles.subtitle}>Allow permissions, pick one app, set daily minutes.</Text>
+        <Text style={styles.subtitle}>Allow permissions, pick app, set minutes, start.</Text>
       </View>
 
       <Card>
@@ -242,26 +280,33 @@ function AppContainer(): React.JSX.Element {
             }}
           />
         </View>
-        {!permissionsGranted ? (
-          <Text style={styles.helper}>Grant all 3 permissions first.</Text>
-        ) : null}
-        {managedApps.length === 0 ? (
+        <TextInput
+          value={appQuery}
+          onChangeText={setAppQuery}
+          placeholder="Search apps"
+          placeholderTextColor={colors.textSecondary}
+          style={styles.searchInput}
+          autoCapitalize="none"
+        />
+        {!permissionsGranted ? <Text style={styles.helper}>Grant all 3 permissions first.</Text> : null}
+        {filteredManagedApps.length === 0 ? (
           <Text style={styles.helper}>
-            {loadingApps ? "Getting apps..." : "No apps found yet. Tap refresh apps."}
+            {loadingApps ? "Getting apps..." : "No apps found. Tap refresh apps."}
           </Text>
         ) : (
-          <View style={styles.appGrid}>
-            {managedApps.map((app) => {
+          <View style={styles.appList}>
+            {filteredManagedApps.slice(0, 120).map((app) => {
               const selected = app.id === selectedTargetId;
               return (
                 <Pressable
                   key={app.id}
-                  style={[styles.appChip, selected ? styles.appChipActive : undefined]}
+                  style={[styles.appRow, selected ? styles.appRowActive : undefined]}
                   onPress={() => setSelectedTargetId(app.id)}
                 >
-                  <Text style={[styles.appChipText, selected ? styles.appChipTextActive : undefined]}>
+                  <Text style={[styles.appRowText, selected ? styles.appRowTextActive : undefined]}>
                     {app.displayName}
                   </Text>
+                  {selected ? <Text style={styles.appRowBadge}>Selected</Text> : null}
                 </Pressable>
               );
             })}
@@ -271,9 +316,7 @@ function AppContainer(): React.JSX.Element {
 
       <Card>
         <Text style={styles.stepTitle}>Step 3: Set daily limit</Text>
-        <Text style={styles.helper}>
-          App: {selectedApp?.displayName ?? selectedTargetId ?? "Select an app"}
-        </Text>
+        <Text style={styles.helper}>App: {selectedApp?.displayName ?? selectedTargetId ?? "Select an app"}</Text>
         <Text style={styles.limitText}>{currentLimit} min / day</Text>
         <View style={styles.limitRow}>
           <Button label="-5m" variant="secondary" onPress={() => setDailyLimitMinutes(currentLimit - 5)} />
@@ -311,6 +354,52 @@ function AppContainer(): React.JSX.Element {
           />
         </View>
         {!isBootstrapped ? <Text style={styles.helper}>Loading setup...</Text> : null}
+      </Card>
+
+      <Card>
+        <View style={styles.rowBetween}>
+          <Text style={styles.stepTitle}>Enforcement live now</Text>
+          <Button
+            label="Refresh"
+            variant="secondary"
+            onPress={() => {
+              void syncFromNativeUsage();
+              void refreshLiveUsage();
+            }}
+          />
+        </View>
+        {filteredLiveUsage.length === 0 ? (
+          <Text style={styles.helper}>No app usage data yet.</Text>
+        ) : (
+          <View style={styles.liveList}>
+            {filteredLiveUsage.slice(0, 160).map((row) => {
+              const status = row.blockedNow ? "Blocked" : row.enforced ? "Live" : "Not managed";
+              const usageText = row.enforced && row.dailyLimitMinutes !== undefined
+                ? `${row.minutesUsedToday} / ${row.dailyLimitMinutes} min`
+                : `${row.minutesUsedToday} min`;
+              return (
+                <View key={row.appId} style={styles.liveRow}>
+                  <View style={styles.liveMain}>
+                    <Text style={styles.liveTitle}>{row.displayName}</Text>
+                    <Text style={styles.helper}>{usageText}</Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.statusBadge,
+                      row.blockedNow
+                        ? styles.statusBlocked
+                        : row.enforced
+                          ? styles.statusLive
+                          : styles.statusIdle
+                    ]}
+                  >
+                    <Text style={styles.statusText}>{status}</Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
       </Card>
 
       <Card>
@@ -372,29 +461,44 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.sm
   },
-  appGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
-  },
-  appChip: {
+  searchInput: {
+    ...typography.body,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 999,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.surface
-  },
-  appChipActive: {
-    backgroundColor: colors.success,
-    borderColor: colors.success
-  },
-  appChipText: {
+    borderRadius: 10,
+    backgroundColor: colors.surface,
     color: colors.textPrimary,
-    fontWeight: "500"
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm
   },
-  appChipTextActive: {
-    color: "#FFFFFF"
+  appList: {
+    gap: spacing.sm
+  },
+  appRow: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  appRowActive: {
+    borderColor: colors.success,
+    backgroundColor: "#ECFDF5"
+  },
+  appRowText: {
+    ...typography.body,
+    color: colors.textPrimary
+  },
+  appRowTextActive: {
+    fontWeight: "600"
+  },
+  appRowBadge: {
+    ...typography.caption,
+    color: colors.success,
+    fontWeight: "700"
   },
   helper: {
     ...typography.caption,
@@ -428,6 +532,48 @@ const styles = StyleSheet.create({
   startRow: {
     flexDirection: "row",
     gap: spacing.sm
+  },
+  liveList: {
+    gap: spacing.sm
+  },
+  liveRow: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  liveMain: {
+    flex: 1,
+    gap: spacing.xs
+  },
+  liveTitle: {
+    ...typography.body,
+    fontWeight: "600",
+    color: colors.textPrimary
+  },
+  statusBadge: {
+    borderRadius: 999,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs
+  },
+  statusLive: {
+    backgroundColor: "#ECFDF5"
+  },
+  statusBlocked: {
+    backgroundColor: "#FEF2F2"
+  },
+  statusIdle: {
+    backgroundColor: colors.surface
+  },
+  statusText: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    fontWeight: "700"
   },
   logButtons: {
     flexDirection: "row",

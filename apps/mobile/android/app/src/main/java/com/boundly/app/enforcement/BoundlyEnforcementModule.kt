@@ -30,56 +30,26 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
   ReactContextBaseJavaModule(reactContext) {
 
   private val policyStore = BoundlyPolicyStore(reactContext)
-  private val usageStatsCollector = UsageStatsCollector(reactContext)
+  private val usageStatsCollector = UsageStatsCollector(reactContext, policyStore)
   private val policyEvaluator = BoundlyPolicyEvaluator(policyStore, usageStatsCollector)
 
   override fun getName(): String = MODULE_NAME
 
+  private data class AppDescriptor(
+    val packageName: String,
+    val displayName: String
+  )
+
   @ReactMethod
   fun listInstalledApps(promise: Promise) {
     try {
-      val packageManager = reactContext.packageManager
-      val launchIntent = Intent(Intent.ACTION_MAIN, null).apply {
-        addCategory(Intent.CATEGORY_LAUNCHER)
-      }
-      val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        packageManager.queryIntentActivities(
-          launchIntent,
-          PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong())
-        )
-      } else {
-        @Suppress("DEPRECATION")
-        packageManager.queryIntentActivities(launchIntent, PackageManager.MATCH_ALL)
-      }
-
-      val userApps = resolveInfos
-        .mapNotNull { resolveInfo ->
-          val activityInfo = resolveInfo.activityInfo ?: return@mapNotNull null
-          val packageName = activityInfo.packageName
-          if (packageName == reactContext.packageName) {
-            return@mapNotNull null
-          }
-
-          val flags = activityInfo.applicationInfo?.flags ?: 0
-          val isSystemApp = (flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
-            (flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
-          if (isSystemApp) {
-            return@mapNotNull null
-          }
-
-          val label = resolveInfo.loadLabel(packageManager)?.toString()?.trim()
-          val displayName = if (label.isNullOrBlank()) packageName else label
-          Triple(packageName, displayName, packageName)
-        }
-        .distinctBy { triple -> triple.first }
-        .sortedBy { triple -> triple.second.lowercase(Locale.US) }
-
+      val userApps = queryLaunchableUserApps()
       val result = Arguments.createArray()
-      userApps.forEach { (id, displayName, platformPackageId) ->
+      userApps.forEach { app ->
         val map = Arguments.createMap()
-        map.putString("id", id)
-        map.putString("displayName", displayName)
-        map.putString("platformPackageId", platformPackageId)
+        map.putString("id", app.packageName)
+        map.putString("displayName", app.displayName)
+        map.putString("platformPackageId", app.packageName)
         result.pushMap(map)
       }
 
@@ -202,6 +172,7 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
   fun getHealth(promise: Promise) {
     try {
       val missingPermissions = mutableListOf<String>()
+      val enforcementEnabled = policyStore.isEnforcementEnabled()
       val accessibilityEnabled = hasAccessibilityServiceEnabled()
       if (!hasUsageAccess()) {
         missingPermissions.add("usage_access")
@@ -213,14 +184,21 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
         missingPermissions.add("ignore_battery_optimization")
       }
       val lastAccessibilityError = policyStore.getLastAccessibilityError()
+      val lastHeartbeatIso = policyStore.getLastHeartbeatIso()
+      val heartbeatAgeMs = runCatching {
+        val heartbeat = lastHeartbeatIso?.let { iso -> Instant.parse(iso) } ?: return@runCatching Long.MAX_VALUE
+        Instant.now().toEpochMilli() - heartbeat.toEpochMilli()
+      }.getOrElse { Long.MAX_VALUE }
+      val staleHeartbeat = enforcementEnabled && heartbeatAgeMs > STALE_HEARTBEAT_MS
 
       val health = Arguments.createMap()
       health.putString(
         "status",
         when {
           missingPermissions.isNotEmpty() -> "permissions_missing"
-          accessibilityEnabled && !lastAccessibilityError.isNullOrBlank() -> "enforcement_degraded"
-          policyStore.isEnforcementEnabled() -> "enforcement_running"
+          !lastAccessibilityError.isNullOrBlank() -> "enforcement_degraded"
+          staleHeartbeat -> "enforcement_degraded"
+          enforcementEnabled -> "enforcement_running"
           else -> "enforcement_stopped"
         }
       )
@@ -228,10 +206,19 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
       val missingArray = Arguments.createArray()
       missingPermissions.forEach { missingPermission -> missingArray.pushString(missingPermission) }
       health.putArray("missingPermissions", missingArray)
-      if (!lastAccessibilityError.isNullOrBlank()) {
-        health.putString("detail", lastAccessibilityError)
+      val detail = when {
+        missingPermissions.isNotEmpty() -> {
+          val names = missingPermissions.joinToString(", ") { key -> permissionLabel(key) }
+          "Grant required permissions: $names"
+        }
+        !lastAccessibilityError.isNullOrBlank() -> "Accessibility issue: $lastAccessibilityError"
+        staleHeartbeat -> "Enforcement service heartbeat is stale. Disable battery restrictions and restart enforcement."
+        else -> null
       }
-      health.putString("lastHeartbeatIso", policyStore.getLastHeartbeatIso() ?: Instant.now().toString())
+      if (!detail.isNullOrBlank()) {
+        health.putString("detail", detail)
+      }
+      health.putString("lastHeartbeatIso", lastHeartbeatIso ?: Instant.now().toString())
       promise.resolve(health)
     } catch (error: Exception) {
       promise.reject("GET_HEALTH_ERROR", error)
@@ -253,6 +240,45 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
       promise.resolve(usageSnapshotMap)
     } catch (error: Exception) {
       promise.reject("USAGE_SNAPSHOT_ERROR", error)
+    }
+  }
+
+  @ReactMethod
+  fun getLiveAppUsage(promise: Promise) {
+    try {
+      val apps = queryLaunchableUserApps()
+      val packageIds = apps.map { app -> app.packageName }.toSet()
+      val minutesByPackage = usageStatsCollector.collectRawDailyMinutes(packageIds)
+      val blockedPackages = policyStore.getBlockedPackages()
+      val dailyLimitByPackage = parseDailyLimitByPackage(policyStore.getProfilesJson())
+
+      val result = Arguments.createArray()
+      apps.forEach { app ->
+        val minutesUsedToday = minutesByPackage[app.packageName] ?: 0
+        val dailyLimitMinutes = dailyLimitByPackage[app.packageName]
+        val remainingMinutes = dailyLimitMinutes?.let { limit ->
+          (limit - minutesUsedToday).coerceAtLeast(0)
+        }
+
+        val row = Arguments.createMap()
+        row.putString("appId", app.packageName)
+        row.putString("displayName", app.displayName)
+        row.putString("platformPackageId", app.packageName)
+        row.putInt("minutesUsedToday", minutesUsedToday)
+        row.putBoolean("enforced", dailyLimitMinutes != null)
+        row.putBoolean("blockedNow", blockedPackages.contains(app.packageName))
+        if (dailyLimitMinutes != null) {
+          row.putInt("dailyLimitMinutes", dailyLimitMinutes)
+        }
+        if (remainingMinutes != null) {
+          row.putInt("remainingMinutes", remainingMinutes)
+        }
+        result.pushMap(row)
+      }
+
+      promise.resolve(result)
+    } catch (error: Exception) {
+      promise.reject("LIVE_USAGE_ERROR", error)
     }
   }
 
@@ -369,6 +395,85 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
     return map
   }
 
+  private fun queryLaunchableUserApps(): List<AppDescriptor> {
+    val packageManager = reactContext.packageManager
+    val launchIntent = Intent(Intent.ACTION_MAIN, null).apply {
+      addCategory(Intent.CATEGORY_LAUNCHER)
+    }
+    val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      packageManager.queryIntentActivities(
+        launchIntent,
+        PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong())
+      )
+    } else {
+      @Suppress("DEPRECATION")
+      packageManager.queryIntentActivities(launchIntent, PackageManager.MATCH_ALL)
+    }
+
+    return resolveInfos
+      .mapNotNull { resolveInfo ->
+        val activityInfo = resolveInfo.activityInfo ?: return@mapNotNull null
+        val packageName = activityInfo.packageName
+        if (packageName == reactContext.packageName) {
+          return@mapNotNull null
+        }
+
+        val appInfo = activityInfo.applicationInfo ?: return@mapNotNull null
+        val flags = appInfo.flags
+        val pureSystemApp = (flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
+          (flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
+        if (pureSystemApp && !ALLOWED_SYSTEM_TARGETS.contains(packageName)) {
+          return@mapNotNull null
+        }
+
+        val label = resolveInfo.loadLabel(packageManager)?.toString()?.trim()
+        val displayName = if (label.isNullOrBlank()) packageName else label
+        AppDescriptor(
+          packageName = packageName,
+          displayName = displayName
+        )
+      }
+      .distinctBy { app -> app.packageName }
+      .sortedBy { app -> app.displayName.lowercase(Locale.US) }
+  }
+
+  private fun parseDailyLimitByPackage(rawProfilesJson: String): Map<String, Int> {
+    val limitsByPackage = mutableMapOf<String, Int>()
+    val profileJsonArray = runCatching { JSONArray(rawProfilesJson) }.getOrElse { JSONArray("[]") }
+    for (index in 0 until profileJsonArray.length()) {
+      val profile = profileJsonArray.optJSONObject(index) ?: continue
+      if (!profile.optBoolean("enabled", true)) {
+        continue
+      }
+      val dailyLimitMinutes = profile.optInt("dailyLimitMinutes", 0).coerceAtLeast(0)
+      val targets = profile.optJSONArray("targetAppIds") ?: JSONArray("[]")
+      for (targetIndex in 0 until targets.length()) {
+        val target = targets.optString(targetIndex, "")
+        if (target.isBlank()) {
+          continue
+        }
+        val existing = limitsByPackage[target]
+        limitsByPackage[target] = if (existing == null) {
+          dailyLimitMinutes
+        } else {
+          minOf(existing, dailyLimitMinutes)
+        }
+      }
+    }
+    return limitsByPackage
+  }
+
+  private fun permissionLabel(permissionKey: String): String {
+    return when (permissionKey) {
+      "usage_access" -> "Usage access"
+      "accessibility" -> "Accessibility"
+      "ignore_battery_optimization" -> "Battery optimization"
+      "overlay" -> "Overlay"
+      "notifications" -> "Notifications"
+      else -> permissionKey
+    }
+  }
+
   private fun readableArrayToJsonArray(readableArray: ReadableArray): JSONArray {
     val jsonArray = JSONArray()
     for (index in 0 until readableArray.size()) {
@@ -416,5 +521,9 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
 
   companion object {
     private const val MODULE_NAME = "BoundlyEnforcement"
+    private const val STALE_HEARTBEAT_MS = 25_000L
+    private val ALLOWED_SYSTEM_TARGETS = setOf(
+      "com.google.android.youtube"
+    )
   }
 }

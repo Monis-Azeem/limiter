@@ -7,10 +7,14 @@ import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import java.time.LocalDate
 
 class BoundlyAccessibilityService : AccessibilityService() {
   private val policyStore by lazy { BoundlyPolicyStore(this) }
-  private var lastLaunchTimeMs = 0L
+  private var lastInterventionAtMs = 0L
+  private var lastHomeActionAtMs = 0L
+  private var lastObservedPackage: String? = null
+  private var lastObservedAtMs = 0L
 
   override fun onServiceConnected() {
     super.onServiceConnected()
@@ -43,11 +47,17 @@ class BoundlyAccessibilityService : AccessibilityService() {
       }
 
       val packageName = event.packageName?.toString() ?: return
-      if (packageName == applicationContext.packageName) {
+      val nowMs = SystemClock.elapsedRealtime()
+
+      if (!policyStore.isEnforcementEnabled()) {
+        lastObservedPackage = packageName
+        lastObservedAtMs = nowMs
         return
       }
 
-      if (!policyStore.isEnforcementEnabled()) {
+      trackFallbackUsage(packageName, nowMs)
+
+      if (packageName == applicationContext.packageName || packageName == "com.android.systemui") {
         return
       }
 
@@ -56,13 +66,13 @@ class BoundlyAccessibilityService : AccessibilityService() {
         return
       }
 
-      val now = SystemClock.elapsedRealtime()
-      if (now - lastLaunchTimeMs < 1000L) {
+      if (nowMs - lastInterventionAtMs < LOCK_INTERVENTION_COOLDOWN_MS) {
         return
       }
 
-      lastLaunchTimeMs = now
-      policyStore.appendDebugLog("Blocked app launch detected: $packageName")
+      lastInterventionAtMs = nowMs
+      performHomeAction(nowMs)
+      policyStore.appendDebugLog("Blocked launch intercepted: $packageName")
       launchLockScreen(packageName)
     } catch (error: Exception) {
       policyStore.setLastAccessibilityError(error.message ?: error.toString())
@@ -71,15 +81,60 @@ class BoundlyAccessibilityService : AccessibilityService() {
   }
 
   override fun onInterrupt() {
+    flushObservedUsage(SystemClock.elapsedRealtime())
     policyStore.setLastAccessibilityError("Accessibility service interrupted by system")
     policyStore.appendDebugLog("Accessibility service interrupted")
     Log.w(TAG, "Accessibility service interrupted")
+  }
+
+  private fun trackFallbackUsage(packageName: String, nowMs: Long) {
+    val previousPackage = lastObservedPackage
+    val previousAtMs = lastObservedAtMs
+    if (!previousPackage.isNullOrBlank() && previousPackage != packageName && previousAtMs > 0L) {
+      val managedPackages = policyStore.getManagedPackages()
+      if (managedPackages.contains(previousPackage)) {
+        val elapsedSeconds = ((nowMs - previousAtMs).coerceAtLeast(0L) / 1000L)
+        if (elapsedSeconds > 0L) {
+          policyStore.addFallbackUsageSeconds(LocalDate.now().toString(), previousPackage, elapsedSeconds)
+        }
+      }
+    }
+    lastObservedPackage = packageName
+    lastObservedAtMs = nowMs
+  }
+
+  private fun flushObservedUsage(nowMs: Long) {
+    val previousPackage = lastObservedPackage ?: return
+    val managedPackages = policyStore.getManagedPackages()
+    if (!managedPackages.contains(previousPackage)) {
+      return
+    }
+    val elapsedSeconds = ((nowMs - lastObservedAtMs).coerceAtLeast(0L) / 1000L)
+    if (elapsedSeconds > 0L) {
+      policyStore.addFallbackUsageSeconds(LocalDate.now().toString(), previousPackage, elapsedSeconds)
+    }
+  }
+
+  private fun performHomeAction(nowMs: Long) {
+    if (nowMs - lastHomeActionAtMs < HOME_ACTION_COOLDOWN_MS) {
+      return
+    }
+    runCatching {
+      performGlobalAction(GLOBAL_ACTION_HOME)
+      lastHomeActionAtMs = nowMs
+    }.onFailure { error ->
+      policyStore.appendDebugLog("Home action failed: ${error.message ?: error.toString()}")
+    }
   }
 
   private fun launchLockScreen(blockedPackage: String) {
     runCatching {
       val intent = Intent(this, BoundlyLockActivity::class.java).apply {
         putExtra(BoundlyLockActivity.EXTRA_BLOCKED_PACKAGE, blockedPackage)
+        putExtra(
+          BoundlyLockActivity.EXTRA_BLOCK_REASON,
+          policyStore.getBlockedReason(blockedPackage) ?: "Daily limit reached"
+        )
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
       }
       startActivity(intent)
@@ -91,5 +146,7 @@ class BoundlyAccessibilityService : AccessibilityService() {
 
   companion object {
     private const val TAG = "BoundlyAccessibility"
+    private const val LOCK_INTERVENTION_COOLDOWN_MS = 1_300L
+    private const val HOME_ACTION_COOLDOWN_MS = 900L
   }
 }

@@ -4,6 +4,7 @@ import {
   evaluatePolicy,
   type EnforcementDecision,
   type EnforcementHealth,
+  type LiveAppUsageRow,
   type PermissionKey,
   type PermissionState,
   type RetentionPolicy,
@@ -148,6 +149,7 @@ interface AppState {
   permissionsGranted: boolean;
   permissionStates: PermissionState[];
   health: EnforcementHealth;
+  liveUsage: LiveAppUsageRow[];
   retentionPolicy: RetentionPolicy;
   intentConfirmed: boolean;
   delaySatisfied: boolean;
@@ -169,6 +171,7 @@ interface AppState {
   requestPermission: (permissionKey: PermissionKey) => Promise<void>;
   refreshPermissions: () => Promise<void>;
   syncFromNativeUsage: () => Promise<void>;
+  refreshLiveUsage: () => Promise<void>;
   startEnforcement: () => Promise<void>;
   stopEnforcement: () => Promise<void>;
   recomputeDecision: () => void;
@@ -198,6 +201,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   permissionsGranted: false,
   permissionStates: [],
   health: initialHealth,
+  liveUsage: [],
   retentionPolicy: DEFAULT_RETENTION_POLICY,
   intentConfirmed: false,
   delaySatisfied: false,
@@ -454,6 +458,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     get().recomputeDecision();
     await get().syncFromNativeUsage();
+    await get().refreshLiveUsage();
   },
 
   requestPermission: async (permissionKey) => {
@@ -516,12 +521,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  refreshLiveUsage: async () => {
+    const rows = await enforcementService.getLiveAppUsage();
+    const sortedRows = [...rows].sort((a, b) => {
+      if (a.enforced !== b.enforced) {
+        return a.enforced ? -1 : 1;
+      }
+      if (b.minutesUsedToday !== a.minutesUsedToday) {
+        return b.minutesUsedToday - a.minutesUsedToday;
+      }
+      return a.displayName.localeCompare(b.displayName);
+    });
+    set({ liveUsage: sortedRows });
+  },
+
   startEnforcement: async () => {
     const state = get();
     await enforcementService.startEnforcement(state.profiles);
     const health = await enforcementService.getHealth();
     set({ health });
     get().recomputeDecision();
+    await get().refreshLiveUsage();
   },
 
   stopEnforcement: async () => {
@@ -529,6 +549,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const health = await enforcementService.getHealth();
     set({ health });
     get().recomputeDecision();
+    await get().refreshLiveUsage();
   },
 
   recomputeDecision: () => {

@@ -6,9 +6,11 @@ import android.content.Context
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
-import java.util.UUID
 
-class UsageStatsCollector(private val context: Context) {
+class UsageStatsCollector(
+  private val context: Context,
+  private val policyStore: BoundlyPolicyStore = BoundlyPolicyStore(context)
+) {
   data class Snapshot(
     val minutesByPackage: Map<String, Int>,
     val opensByPackage: Map<String, Int>
@@ -28,6 +30,49 @@ class UsageStatsCollector(private val context: Context) {
       return Snapshot(emptyMap(), emptyMap())
     }
 
+    val dayIso = LocalDate.now().toString()
+    policyStore.clearSetupBaselinesForDay(dayIso)
+    policyStore.clearFallbackUsageForDay(dayIso)
+
+    return runCatching {
+      collectSnapshotFromUsageStats(targetPackages, dayIso)
+    }.getOrElse { error ->
+      policyStore.appendDebugLog(
+        "UsageStats unavailable, using fallback counters: ${error.message ?: error.javaClass.simpleName}"
+      )
+      val minutesByPackage = targetPackages.associateWith { targetPackage ->
+        policyStore.getFallbackMinutesForDay(dayIso, targetPackage)
+      }
+      val opensByPackage = targetPackages.associateWith { 0 }
+      Snapshot(minutesByPackage, opensByPackage)
+    }
+  }
+
+  fun collectRawDailyMinutes(targetPackages: Set<String>): Map<String, Int> {
+    if (targetPackages.isEmpty()) {
+      return emptyMap()
+    }
+
+    return runCatching {
+      val now = Instant.now().toEpochMilli()
+      val startOfDay = LocalDate.now()
+        .atStartOfDay(ZoneId.systemDefault())
+        .toInstant()
+        .toEpochMilli()
+      val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+      val aggregateUsage = usageStatsManager.queryAndAggregateUsageStats(startOfDay, now)
+      targetPackages.associateWith { targetPackage ->
+        ((aggregateUsage[targetPackage]?.totalTimeInForeground ?: 0L) / 60_000L).toInt().coerceAtLeast(0)
+      }
+    }.getOrElse {
+      val dayIso = LocalDate.now().toString()
+      targetPackages.associateWith { targetPackage ->
+        policyStore.getFallbackMinutesForDay(dayIso, targetPackage)
+      }
+    }
+  }
+
+  private fun collectSnapshotFromUsageStats(targetPackages: Set<String>, dayIso: String): Snapshot {
     val now = Instant.now().toEpochMilli()
     val startOfDay = LocalDate.now()
       .atStartOfDay(ZoneId.systemDefault())
@@ -38,7 +83,6 @@ class UsageStatsCollector(private val context: Context) {
     val aggregateUsage = usageStatsManager.queryAndAggregateUsageStats(startOfDay, now)
 
     val usageMillisByPackage = mutableMapOf<String, Long>()
-    val opensByPackage = mutableMapOf<String, Int>()
     val foregroundStartByPackage = mutableMapOf<String, Long>()
 
     val usageEvents = usageStatsManager.queryEvents(startOfDay, now)
@@ -51,9 +95,6 @@ class UsageStatsCollector(private val context: Context) {
       }
 
       if (isForegroundEvent(event.eventType)) {
-        if (!foregroundStartByPackage.containsKey(packageName)) {
-          opensByPackage[packageName] = (opensByPackage[packageName] ?: 0) + 1
-        }
         foregroundStartByPackage[packageName] = event.timeStamp
         continue
       }
@@ -71,51 +112,22 @@ class UsageStatsCollector(private val context: Context) {
     }
 
     val minutesByPackage = mutableMapOf<String, Int>()
+    val opensByPackage = mutableMapOf<String, Int>()
     for (targetPackage in targetPackages) {
       val aggregateMinutes = ((aggregateUsage[targetPackage]?.totalTimeInForeground ?: 0L) / 60_000L).toInt()
       val eventMinutes = ((usageMillisByPackage[targetPackage] ?: 0L) / 60_000L).toInt()
-      minutesByPackage[targetPackage] = maxOf(aggregateMinutes, eventMinutes)
+      val rawMinutes = maxOf(aggregateMinutes, eventMinutes).coerceAtLeast(0)
+      val baselineMinutes = policyStore.getOrCreateSetupBaselineMinutes(dayIso, targetPackage, rawMinutes)
+      minutesByPackage[targetPackage] = (rawMinutes - baselineMinutes).coerceAtLeast(0)
+      opensByPackage[targetPackage] = 0
     }
 
     return Snapshot(minutesByPackage, opensByPackage)
   }
 
   fun collectUsageEventsSince(sinceIso: String?, targetPackages: Set<String>): List<UsageEventRecord> {
-    if (targetPackages.isEmpty()) {
-      return emptyList()
-    }
-
-    val now = Instant.now().toEpochMilli()
-    val sinceMillis = runCatching { sinceIso?.let { Instant.parse(it).toEpochMilli() } }
-      .getOrNull() ?: (now - 15 * 60_000L)
-
-    val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-    val usageEvents = usageStatsManager.queryEvents(sinceMillis, now)
-    val event = UsageEvents.Event()
-    val records = mutableListOf<UsageEventRecord>()
-
-    while (usageEvents.hasNextEvent()) {
-      usageEvents.getNextEvent(event)
-      val packageName = event.packageName ?: continue
-      if (!targetPackages.contains(packageName)) {
-        continue
-      }
-
-      if (isForegroundEvent(event.eventType)) {
-        records.add(
-          UsageEventRecord(
-            id = UUID.randomUUID().toString(),
-            targetPackage = packageName,
-            occurredAtIso = Instant.ofEpochMilli(event.timeStamp).toString(),
-            eventType = "open",
-            minutesDelta = 0,
-            opensDelta = 1
-          )
-        )
-      }
-    }
-
-    return records
+    // Open-count telemetry is deprecated for v1.1.x; keep contract compatibility.
+    return emptyList()
   }
 
   fun getLikelyForegroundPackage(targetPackages: Set<String>): String? {
@@ -123,15 +135,17 @@ class UsageStatsCollector(private val context: Context) {
       return null
     }
 
-    val now = Instant.now().toEpochMilli()
-    val windowStart = now - (2 * 60_000L)
-    val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-    val stats = usageStatsManager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, windowStart, now)
-    return stats
-      .asSequence()
-      .filter { stat -> targetPackages.contains(stat.packageName) }
-      .maxByOrNull { stat -> stat.lastTimeUsed }
-      ?.packageName
+    return runCatching {
+      val now = Instant.now().toEpochMilli()
+      val windowStart = now - (2 * 60_000L)
+      val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+      val stats = usageStatsManager.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, windowStart, now)
+      stats
+        .asSequence()
+        .filter { stat -> targetPackages.contains(stat.packageName) }
+        .maxByOrNull { stat -> stat.lastTimeUsed }
+        ?.packageName
+    }.getOrNull()
   }
 
   private fun isForegroundEvent(eventType: Int): Boolean {

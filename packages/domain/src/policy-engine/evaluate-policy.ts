@@ -26,9 +26,8 @@ export function evaluatePolicy(input: PolicyEvaluationInput): EnforcementDecisio
   const { profile, usage, targetAppId, attempt, context } = input;
 
   const minutesUsed = usage.minutesByTarget[targetAppId] ?? 0;
-  const opensUsed = usage.opensByTarget[targetAppId] ?? 0;
   const remainingMinutes = Math.max(0, profile.dailyLimitMinutes - minutesUsed);
-  const remainingOpens = Math.max(0, profile.dailyOpenLimit - opensUsed);
+  const remainingOpens = 0;
 
   if (!profile.enabled) {
     return buildDecision({
@@ -91,15 +90,6 @@ export function evaluatePolicy(input: PolicyEvaluationInput): EnforcementDecisio
     return buildDecision({
       kind: "block",
       reason: "time_limit_reached",
-      remainingMinutes,
-      remainingOpens
-    });
-  }
-
-  if (opensUsed >= profile.dailyOpenLimit) {
-    return buildDecision({
-      kind: "block",
-      reason: "open_limit_reached",
       remainingMinutes,
       remainingOpens
     });

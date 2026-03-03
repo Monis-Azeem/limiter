@@ -9,10 +9,15 @@ class BoundlyPolicyEvaluator(
   private val policyStore: BoundlyPolicyStore,
   private val usageStatsCollector: UsageStatsCollector
 ) {
-  fun evaluateBlockedPackagesNow(): Set<String> {
+  data class BlockedTarget(
+    val packageName: String,
+    val reason: String
+  )
+
+  fun evaluateBlockedTargetsNow(): List<BlockedTarget> {
     val profiles = parseProfiles(policyStore.getProfilesJson())
     if (profiles.isEmpty()) {
-      return emptySet()
+      return emptyList()
     }
 
     val targetPackages = profiles
@@ -22,22 +27,38 @@ class BoundlyPolicyEvaluator(
 
     val snapshot = usageStatsCollector.collectDailySnapshot(targetPackages)
     val now = LocalDateTime.now()
-
-    val blockedPackages = mutableSetOf<String>()
+    val blockedTargets = mutableMapOf<String, BlockedTarget>()
 
     profiles.filter { it.enabled }.forEach { profile ->
       val inWindow = profile.windows.any { window -> window.isActive(now) }
       profile.targetPackages.forEach { targetPackage ->
         val minutesUsed = snapshot.minutesByPackage[targetPackage] ?: 0
-        val opensUsed = snapshot.opensByPackage[targetPackage] ?: 0
-        val limitReached = minutesUsed >= profile.dailyLimitMinutes || opensUsed >= profile.dailyOpenLimit
-        if (inWindow || limitReached) {
-          blockedPackages.add(targetPackage)
+        val limitReached = minutesUsed >= profile.dailyLimitMinutes
+        if (!inWindow && !limitReached) {
+          return@forEach
         }
+        val reason = when {
+          limitReached -> "Daily limit reached (${minutesUsed}m/${profile.dailyLimitMinutes}m)"
+          inWindow -> "Blocked by schedule"
+          else -> "Blocked"
+        }
+        blockedTargets[targetPackage] = BlockedTarget(
+          packageName = targetPackage,
+          reason = reason
+        )
       }
     }
 
-    return blockedPackages
+    return blockedTargets.values.toList()
+  }
+
+  fun evaluateBlockedReasonMapNow(): Map<String, String> = evaluateBlockedTargetsNow()
+    .associate { blockedTarget -> blockedTarget.packageName to blockedTarget.reason }
+
+  fun evaluateBlockedPackagesNow(): Set<String> {
+    return evaluateBlockedTargetsNow()
+      .map { blockedTarget -> blockedTarget.packageName }
+      .toSet()
   }
 
   fun parseManagedPackages(): Set<String> = parseProfiles(policyStore.getProfilesJson())
@@ -52,7 +73,6 @@ class BoundlyPolicyEvaluator(
       val profileJson = profileJsonArray.optJSONObject(index) ?: continue
       val enabled = profileJson.optBoolean("enabled", true)
       val dailyLimitMinutes = profileJson.optInt("dailyLimitMinutes", Int.MAX_VALUE)
-      val dailyOpenLimit = profileJson.optInt("dailyOpenLimit", Int.MAX_VALUE)
 
       val targetPackages = mutableSetOf<String>()
       val targetJsonArray = profileJson.optJSONArray("targetAppIds") ?: JSONArray("[]")
@@ -90,8 +110,7 @@ class BoundlyPolicyEvaluator(
           enabled = enabled,
           targetPackages = targetPackages,
           windows = windows,
-          dailyLimitMinutes = dailyLimitMinutes,
-          dailyOpenLimit = dailyOpenLimit
+          dailyLimitMinutes = dailyLimitMinutes
         )
       )
     }
@@ -104,8 +123,7 @@ class BoundlyPolicyEvaluator(
     val enabled: Boolean,
     val targetPackages: Set<String>,
     val windows: List<PolicyWindow>,
-    val dailyLimitMinutes: Int,
-    val dailyOpenLimit: Int
+    val dailyLimitMinutes: Int
   )
 
   private data class PolicyWindow(

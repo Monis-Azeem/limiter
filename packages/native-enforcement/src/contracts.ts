@@ -1,6 +1,7 @@
 import type {
   AppTarget,
   EnforcementHealth,
+  LiveAppUsageRow,
   PermissionKey,
   PermissionState,
   RuleProfile,
@@ -17,6 +18,7 @@ export interface NativeEnforcementAdapter {
   syncRules(profiles: RuleProfile[]): Promise<void>;
   getHealth(): Promise<EnforcementHealth>;
   getUsageSnapshot(): Promise<UsageSnapshot>;
+  getLiveAppUsage(): Promise<LiveAppUsageRow[]>;
   streamUsageEvents(sinceIso?: string): Promise<UsageEvent[]>;
   getDebugLogs(): Promise<string[]>;
   clearDebugLogs(): Promise<void>;

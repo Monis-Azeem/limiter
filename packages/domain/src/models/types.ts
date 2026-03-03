@@ -16,6 +16,17 @@ export interface AppTarget {
   platformPackageId: string;
 }
 
+export interface LiveAppUsageRow {
+  appId: string;
+  displayName: string;
+  platformPackageId: string;
+  minutesUsedToday: number;
+  enforced: boolean;
+  blockedNow: boolean;
+  dailyLimitMinutes?: number;
+  remainingMinutes?: number;
+}
+
 export type PermissionKey =
   | "usage_access"
   | "accessibility"
@@ -99,6 +110,7 @@ export interface RuleProfile {
   targetAppIds: string[];
   windows: EnforcementWindow[];
   dailyLimitMinutes: number;
+  // Deprecated: open-based enforcement is disabled in v1.1.x (time-based only).
   dailyOpenLimit: number;
   overridePolicy: OverridePolicy;
   frictionPolicy: FrictionPolicy;
@@ -106,6 +118,7 @@ export interface RuleProfile {
 
 export interface UsageSnapshot {
   minutesByTarget: Record<string, number>;
+  // Deprecated: open-based enforcement is disabled in v1.1.x (time-based only).
   opensByTarget: Record<string, number>;
   overridesUsedToday: number;
   lastOverrideAtIso?: string;
@@ -148,6 +161,7 @@ export interface EnforcementDecision {
   kind: DecisionKind;
   reason: DecisionReason;
   remainingMinutes: number;
+  // Deprecated: open-based enforcement is disabled in v1.1.x (time-based only).
   remainingOpens: number;
   delaySeconds?: number;
   cooldownUntilIso?: string;

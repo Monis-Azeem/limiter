@@ -1,6 +1,7 @@
 import type {
   AppTarget,
   EnforcementHealth,
+  LiveAppUsageRow,
   PermissionKey,
   PermissionState,
   RuleProfile,
@@ -20,6 +21,7 @@ interface NativeBoundlyModule {
   syncRules(profiles: RuleProfile[]): Promise<void>;
   getHealth(): Promise<EnforcementHealth>;
   getUsageSnapshot(): Promise<UsageSnapshot>;
+  getLiveAppUsage(): Promise<LiveAppUsageRow[]>;
   streamUsageEvents(sinceIso?: string): Promise<UsageEvent[]>;
   getDebugLogs(): Promise<string[]>;
   clearDebugLogs(): Promise<void>;
@@ -89,6 +91,10 @@ export class ReactNativeEnforcementAdapter implements NativeEnforcementAdapter {
 
   getUsageSnapshot(): Promise<UsageSnapshot> {
     return this.requireModule().getUsageSnapshot();
+  }
+
+  getLiveAppUsage(): Promise<LiveAppUsageRow[]> {
+    return this.requireModule().getLiveAppUsage();
   }
 
   streamUsageEvents(sinceIso?: string): Promise<UsageEvent[]> {

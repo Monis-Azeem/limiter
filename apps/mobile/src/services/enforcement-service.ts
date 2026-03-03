@@ -5,6 +5,7 @@ import {
 import type {
   AppTarget,
   EnforcementHealth,
+  LiveAppUsageRow,
   PermissionKey,
   PermissionState,
   RuleProfile,
@@ -48,6 +49,10 @@ class IosScaffoldEnforcementAdapter implements NativeEnforcementAdapter {
 
   async getUsageSnapshot(): Promise<UsageSnapshot> {
     return createEmptyUsageSnapshot();
+  }
+
+  async getLiveAppUsage(): Promise<LiveAppUsageRow[]> {
+    return [];
   }
 
   async streamUsageEvents(): Promise<UsageEvent[]> {
@@ -95,6 +100,10 @@ class AndroidUnavailableEnforcementAdapter implements NativeEnforcementAdapter {
 
   async getUsageSnapshot(): Promise<UsageSnapshot> {
     return createEmptyUsageSnapshot();
+  }
+
+  async getLiveAppUsage(): Promise<LiveAppUsageRow[]> {
+    return [];
   }
 
   async streamUsageEvents(): Promise<UsageEvent[]> {
