@@ -10,10 +10,10 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.boundly.app.MainActivity
-import java.time.LocalDate
 
 class BoundlyLockActivity : Activity() {
   private val handler = Handler(Looper.getMainLooper())
+  private val quoteRepository by lazy { QuoteRepository(this) }
   private var secondsRemaining = AUTO_CLOSE_SECONDS
   private lateinit var countdownText: TextView
 
@@ -34,7 +34,7 @@ class BoundlyLockActivity : Activity() {
 
     val blockedPackage = intent.getStringExtra(EXTRA_BLOCKED_PACKAGE) ?: "this app"
     val reason = intent.getStringExtra(EXTRA_BLOCK_REASON) ?: "Daily limit reached"
-    val quote = pickQuote(blockedPackage)
+    val quote = quoteRepository.nextQuote()
 
     val root = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
@@ -97,20 +97,6 @@ class BoundlyLockActivity : Activity() {
   override fun onDestroy() {
     handler.removeCallbacks(countdownRunnable)
     super.onDestroy()
-  }
-
-  private fun pickQuote(seed: String): String {
-    val quotes = listOf(
-      "Small breaks now protect your focus later.",
-      "Attention grows where time is protected.",
-      "Your goals need minutes more than your feed does.",
-      "A short pause can reset your whole day.",
-      "Use your phone on purpose, not on autopilot."
-    )
-    val daySeed = LocalDate.now().toString()
-    val rawIndex = (seed + daySeed).hashCode().toLong() and 0x7fffffff
-    val index = (rawIndex % quotes.size.toLong()).toInt()
-    return quotes[index]
   }
 
   private fun openHomeAndFinish() {

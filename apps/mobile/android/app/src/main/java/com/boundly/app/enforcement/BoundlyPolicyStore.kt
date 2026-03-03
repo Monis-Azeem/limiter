@@ -93,6 +93,12 @@ class BoundlyPolicyStore(private val context: Context) {
 
   fun getLastHeartbeatIso(): String? = prefs.getString(KEY_LAST_HEARTBEAT_ISO, null)
 
+  fun setLastSelfHealAttemptIso(lastSelfHealAttemptIso: String) {
+    prefs.edit().putString(KEY_LAST_SELF_HEAL_ATTEMPT_ISO, lastSelfHealAttemptIso).apply()
+  }
+
+  fun getLastSelfHealAttemptIso(): String? = prefs.getString(KEY_LAST_SELF_HEAL_ATTEMPT_ISO, null)
+
   fun setOverrideCountToday(count: Int) {
     prefs.edit().putInt(KEY_OVERRIDE_COUNT_TODAY, count).apply()
   }
@@ -152,6 +158,18 @@ class BoundlyPolicyStore(private val context: Context) {
 
   fun clearDebugLogs() {
     prefs.edit().putString(KEY_DEBUG_LOGS, "[]").apply()
+  }
+
+  fun getAndAdvanceQuoteIndex(totalQuotes: Int): Int {
+    if (totalQuotes <= 0) {
+      return 0
+    }
+
+    val currentIndex = prefs.getInt(KEY_QUOTE_INDEX, 0).coerceAtLeast(0)
+    val normalizedIndex = currentIndex % totalQuotes
+    val nextIndex = (normalizedIndex + 1) % totalQuotes
+    prefs.edit().putInt(KEY_QUOTE_INDEX, nextIndex).apply()
+    return normalizedIndex
   }
 
   fun getOrCreateSetupBaselineMinutes(
@@ -246,10 +264,12 @@ class BoundlyPolicyStore(private val context: Context) {
     const val KEY_BLOCKED_PACKAGES = "blocked_packages"
     const val KEY_BLOCKED_PACKAGE_REASONS = "blocked_package_reasons"
     const val KEY_LAST_HEARTBEAT_ISO = "last_heartbeat_iso"
+    const val KEY_LAST_SELF_HEAL_ATTEMPT_ISO = "last_self_heal_attempt_iso"
     const val KEY_OVERRIDE_COUNT_TODAY = "override_count_today"
     const val KEY_LAST_OVERRIDE_AT_ISO = "last_override_at_iso"
     const val KEY_LAST_ACCESSIBILITY_ERROR = "last_accessibility_error"
     const val KEY_DEBUG_LOGS = "debug_logs"
+    const val KEY_QUOTE_INDEX = "quote_index"
     const val KEY_SETUP_BASELINES = "setup_baselines"
     const val KEY_SETUP_BASELINE_FIRST_DAY = "setup_baseline_first_day"
     const val KEY_FALLBACK_USAGE_SECONDS = "fallback_usage_seconds"

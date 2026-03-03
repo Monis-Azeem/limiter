@@ -31,7 +31,11 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
 
   private val policyStore = BoundlyPolicyStore(reactContext)
   private val usageStatsCollector = UsageStatsCollector(reactContext, policyStore)
-  private val policyEvaluator = BoundlyPolicyEvaluator(policyStore, usageStatsCollector)
+  private val policyEvaluator = BoundlyPolicyEvaluator(
+    policyStore,
+    usageStatsCollector,
+    reactContext.packageName
+  )
 
   override fun getName(): String = MODULE_NAME
 
@@ -133,7 +137,8 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
   @ReactMethod
   fun startEnforcement(profiles: ReadableArray, promise: Promise) {
     try {
-      policyStore.setProfilesJson(readableArrayToJsonArray(profiles).toString())
+      val sanitizedProfilesJson = sanitizeProfilesJson(profiles)
+      policyStore.setProfilesJson(sanitizedProfilesJson)
       policyStore.setEnforcementEnabled(true)
       policyStore.clearLastAccessibilityError()
       policyStore.appendDebugLog("Enforcement started")
@@ -161,7 +166,8 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
   @ReactMethod
   fun syncRules(profiles: ReadableArray, promise: Promise) {
     try {
-      policyStore.setProfilesJson(readableArrayToJsonArray(profiles).toString())
+      val sanitizedProfilesJson = sanitizeProfilesJson(profiles)
+      policyStore.setProfilesJson(sanitizedProfilesJson)
       promise.resolve(null)
     } catch (error: Exception) {
       promise.reject("SYNC_RULES_ERROR", error)
@@ -190,6 +196,7 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
         Instant.now().toEpochMilli() - heartbeat.toEpochMilli()
       }.getOrElse { Long.MAX_VALUE }
       val staleHeartbeat = enforcementEnabled && heartbeatAgeMs > STALE_HEARTBEAT_MS
+      val selfHeal = maybeSelfHealForStaleHeartbeat(staleHeartbeat, enforcementEnabled)
 
       val health = Arguments.createMap()
       health.putString(
@@ -212,7 +219,11 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
           "Grant required permissions: $names"
         }
         !lastAccessibilityError.isNullOrBlank() -> "Accessibility issue: $lastAccessibilityError"
-        staleHeartbeat -> "Enforcement service heartbeat is stale. Disable battery restrictions and restart enforcement."
+        staleHeartbeat && selfHeal.attempted && selfHeal.succeeded ->
+          "Enforcement heartbeat was stale. Auto-restart triggered."
+        staleHeartbeat && selfHeal.attempted && !selfHeal.succeeded ->
+          "Enforcement heartbeat is stale. Auto-restart failed; open Boundly and tap Start enforcement."
+        staleHeartbeat -> "Enforcement heartbeat is stale. Waiting before next auto-restart attempt."
         else -> null
       }
       if (!detail.isNullOrBlank()) {
@@ -449,7 +460,7 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
       val targets = profile.optJSONArray("targetAppIds") ?: JSONArray("[]")
       for (targetIndex in 0 until targets.length()) {
         val target = targets.optString(targetIndex, "")
-        if (target.isBlank()) {
+        if (target.isBlank() || target == reactContext.packageName) {
           continue
         }
         val existing = limitsByPackage[target]
@@ -472,6 +483,80 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
       "notifications" -> "Notifications"
       else -> permissionKey
     }
+  }
+
+  private data class SelfHealResult(
+    val attempted: Boolean,
+    val succeeded: Boolean
+  )
+
+  private fun maybeSelfHealForStaleHeartbeat(
+    staleHeartbeat: Boolean,
+    enforcementEnabled: Boolean
+  ): SelfHealResult {
+    if (!staleHeartbeat || !enforcementEnabled) {
+      return SelfHealResult(attempted = false, succeeded = false)
+    }
+
+    val now = Instant.now()
+    val lastAttemptIso = policyStore.getLastSelfHealAttemptIso()
+    val lastAttemptAgeMs = runCatching {
+      lastAttemptIso?.let { iso -> now.toEpochMilli() - Instant.parse(iso).toEpochMilli() }
+        ?: Long.MAX_VALUE
+    }.getOrElse { Long.MAX_VALUE }
+
+    if (lastAttemptAgeMs < SELF_HEAL_COOLDOWN_MS) {
+      return SelfHealResult(attempted = false, succeeded = false)
+    }
+
+    policyStore.setLastSelfHealAttemptIso(now.toString())
+    policyStore.appendDebugLog("Stale heartbeat detected; attempting foreground-service self-heal")
+
+    return runCatching {
+      BoundlyForegroundService.start(reactContext)
+      policyStore.appendDebugLog("Self-heal restart signal sent")
+      SelfHealResult(attempted = true, succeeded = true)
+    }.getOrElse { error ->
+      policyStore.appendDebugLog("Self-heal restart failed: ${error.message ?: error.toString()}")
+      SelfHealResult(attempted = true, succeeded = false)
+    }
+  }
+
+  private fun sanitizeProfilesJson(profiles: ReadableArray): String {
+    val rawProfiles = readableArrayToJsonArray(profiles)
+    val sanitizedProfiles = JSONArray()
+    var removedSelfTargets = 0
+
+    for (index in 0 until rawProfiles.length()) {
+      val profile = rawProfiles.optJSONObject(index) ?: continue
+      val sanitizedProfile = JSONObject(profile.toString())
+      val targets = profile.optJSONArray("targetAppIds") ?: JSONArray("[]")
+      val sanitizedTargets = JSONArray()
+      val dedupe = mutableSetOf<String>()
+
+      for (targetIndex in 0 until targets.length()) {
+        val target = targets.optString(targetIndex, "").trim()
+        if (target.isBlank()) {
+          continue
+        }
+        if (target == reactContext.packageName) {
+          removedSelfTargets += 1
+          continue
+        }
+        if (dedupe.add(target)) {
+          sanitizedTargets.put(target)
+        }
+      }
+
+      sanitizedProfile.put("targetAppIds", sanitizedTargets)
+      sanitizedProfiles.put(sanitizedProfile)
+    }
+
+    if (removedSelfTargets > 0) {
+      policyStore.appendDebugLog("Removed $removedSelfTargets self-target entries from enforcement profiles")
+    }
+
+    return sanitizedProfiles.toString()
   }
 
   private fun readableArrayToJsonArray(readableArray: ReadableArray): JSONArray {
@@ -522,6 +607,7 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
   companion object {
     private const val MODULE_NAME = "BoundlyEnforcement"
     private const val STALE_HEARTBEAT_MS = 25_000L
+    private const val SELF_HEAL_COOLDOWN_MS = 30_000L
     private val ALLOWED_SYSTEM_TARGETS = setOf(
       "com.google.android.youtube"
     )

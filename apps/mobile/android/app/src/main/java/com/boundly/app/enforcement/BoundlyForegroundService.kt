@@ -1,8 +1,10 @@
 package com.boundly.app.enforcement
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -20,8 +22,8 @@ class BoundlyForegroundService : Service() {
   private lateinit var policyStore: BoundlyPolicyStore
   private lateinit var policyEvaluator: BoundlyPolicyEvaluator
   private lateinit var usageStatsCollector: UsageStatsCollector
-  private var lastForcedLockPackage: String? = null
-  private var lastForcedLockAtMs: Long = 0L
+  private var stopRequested = false
+  private var lastLoggedBlockedCount = -1
 
   private val evaluateRunnable = object : Runnable {
     override fun run() {
@@ -37,18 +39,9 @@ class BoundlyForegroundService : Service() {
         val blockedPackages = blockedReasons.keys
         policyStore.setBlockedPackages(blockedPackages, blockedReasons)
         policyStore.setLastHeartbeatIso(Instant.now().toString())
-        policyStore.appendDebugLog("Watchdog heartbeat: blocked=${blockedPackages.size}")
-
-        val foregroundPackage = usageStatsCollector.getLikelyForegroundPackage(blockedPackages)
-        if (!foregroundPackage.isNullOrBlank() && foregroundPackage != packageName) {
-          val nowMs = SystemClock.elapsedRealtime()
-          val isSamePackage = foregroundPackage == lastForcedLockPackage
-          val withinCooldown = nowMs - lastForcedLockAtMs < FORCE_LOCK_COOLDOWN_MS
-          if (!isSamePackage || !withinCooldown) {
-            launchLockScreen(foregroundPackage)
-            lastForcedLockPackage = foregroundPackage
-            lastForcedLockAtMs = nowMs
-          }
+        if (blockedPackages.size != lastLoggedBlockedCount) {
+          policyStore.appendDebugLog("Watchdog heartbeat: blocked=${blockedPackages.size}")
+          lastLoggedBlockedCount = blockedPackages.size
         }
       } catch (error: Exception) {
         policyStore.appendDebugLog("Foreground service error: ${error.message ?: error.toString()}")
@@ -62,18 +55,20 @@ class BoundlyForegroundService : Service() {
     super.onCreate()
     policyStore = BoundlyPolicyStore(this)
     usageStatsCollector = UsageStatsCollector(this, policyStore)
-    policyEvaluator = BoundlyPolicyEvaluator(policyStore, usageStatsCollector)
+    policyEvaluator = BoundlyPolicyEvaluator(policyStore, usageStatsCollector, packageName)
     policyStore.appendDebugLog("Foreground service created")
     ensureNotificationChannel()
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     if (intent?.action == ACTION_STOP) {
+      stopRequested = true
       policyStore.appendDebugLog("Foreground service stop requested")
       stopSelf()
       return START_NOT_STICKY
     }
 
+    stopRequested = false
     policyStore.appendDebugLog("Foreground service started")
     startForeground(NOTIFICATION_ID, buildNotification())
     handler.removeCallbacks(evaluateRunnable)
@@ -82,9 +77,16 @@ class BoundlyForegroundService : Service() {
     return START_STICKY
   }
 
+  override fun onTaskRemoved(rootIntent: Intent?) {
+    policyStore.appendDebugLog("Foreground service task removed from recents")
+    scheduleServiceRestart("task_removed")
+    super.onTaskRemoved(rootIntent)
+  }
+
   override fun onDestroy() {
     policyStore.appendDebugLog("Foreground service destroyed")
     handler.removeCallbacks(evaluateRunnable)
+    scheduleServiceRestart("service_destroyed")
     super.onDestroy()
   }
 
@@ -114,20 +116,40 @@ class BoundlyForegroundService : Service() {
       .build()
   }
 
-  private fun launchLockScreen(blockedPackage: String) {
+  private fun scheduleServiceRestart(reason: String) {
+    if (stopRequested || !policyStore.isEnforcementEnabled()) {
+      policyStore.appendDebugLog("Skip restart schedule ($reason): enforcement disabled or stop requested")
+      return
+    }
+
     runCatching {
-      val intent = Intent(this, BoundlyLockActivity::class.java).apply {
-        putExtra(BoundlyLockActivity.EXTRA_BLOCKED_PACKAGE, blockedPackage)
-        putExtra(
-          BoundlyLockActivity.EXTRA_BLOCK_REASON,
-          policyStore.getBlockedReason(blockedPackage) ?: "Daily limit reached"
-        )
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+      val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+      val restartIntent = Intent(this, BoundlyServiceRestartReceiver::class.java).apply {
+        action = ACTION_RESTART
       }
-      startActivity(intent)
-      policyStore.appendDebugLog("Foreground watchdog forced lock for $blockedPackage")
+      val pendingIntent = PendingIntent.getBroadcast(
+        this,
+        RESTART_REQUEST_CODE,
+        restartIntent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+      )
+      val triggerAtMs = SystemClock.elapsedRealtime() + RESTART_DELAY_MS
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        alarmManager.setExactAndAllowWhileIdle(
+          AlarmManager.ELAPSED_REALTIME_WAKEUP,
+          triggerAtMs,
+          pendingIntent
+        )
+      } else {
+        alarmManager.setExact(
+          AlarmManager.ELAPSED_REALTIME_WAKEUP,
+          triggerAtMs,
+          pendingIntent
+        )
+      }
+      policyStore.appendDebugLog("Scheduled service restart in ${RESTART_DELAY_MS}ms ($reason)")
     }.onFailure { error ->
-      policyStore.appendDebugLog("Foreground watchdog lock error: ${error.message ?: error.toString()}")
+      policyStore.appendDebugLog("Failed to schedule service restart ($reason): ${error.message ?: error.toString()}")
     }
   }
 
@@ -135,9 +157,11 @@ class BoundlyForegroundService : Service() {
     private const val CHANNEL_ID = "boundly_enforcement_channel"
     private const val NOTIFICATION_ID = 4401
     private const val HEARTBEAT_INTERVAL_MS = 3_500L
-    private const val FORCE_LOCK_COOLDOWN_MS = 4_000L
+    private const val RESTART_DELAY_MS = 1_500L
+    private const val RESTART_REQUEST_CODE = 4417
     const val ACTION_START = "com.boundly.app.enforcement.START"
     const val ACTION_STOP = "com.boundly.app.enforcement.STOP"
+    const val ACTION_RESTART = "com.boundly.app.enforcement.RESTART"
 
     fun start(context: Context) {
       val intent = Intent(context, BoundlyForegroundService::class.java).apply {

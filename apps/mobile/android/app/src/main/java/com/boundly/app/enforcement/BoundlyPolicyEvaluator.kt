@@ -7,7 +7,8 @@ import java.time.LocalDateTime
 
 class BoundlyPolicyEvaluator(
   private val policyStore: BoundlyPolicyStore,
-  private val usageStatsCollector: UsageStatsCollector
+  private val usageStatsCollector: UsageStatsCollector,
+  private val appPackageName: String
 ) {
   data class BlockedTarget(
     val packageName: String,
@@ -78,7 +79,7 @@ class BoundlyPolicyEvaluator(
       val targetJsonArray = profileJson.optJSONArray("targetAppIds") ?: JSONArray("[]")
       for (targetIndex in 0 until targetJsonArray.length()) {
         val target = targetJsonArray.optString(targetIndex, "")
-        if (target.isNotBlank()) {
+        if (target.isNotBlank() && target != appPackageName) {
           targetPackages.add(target)
         }
       }
