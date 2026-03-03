@@ -98,7 +98,7 @@ class BoundlyForegroundService : Service() {
   companion object {
     private const val CHANNEL_ID = "boundly_enforcement_channel"
     private const val NOTIFICATION_ID = 4401
-    private const val HEARTBEAT_INTERVAL_MS = 30_000L
+    private const val HEARTBEAT_INTERVAL_MS = 10_000L
     const val ACTION_START = "com.boundly.app.enforcement.START"
     const val ACTION_STOP = "com.boundly.app.enforcement.STOP"
 

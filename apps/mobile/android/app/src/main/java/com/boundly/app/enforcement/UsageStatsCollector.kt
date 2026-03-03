@@ -37,13 +37,10 @@ class UsageStatsCollector(private val context: Context) {
     val usageStatsManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
     val aggregateUsage = usageStatsManager.queryAndAggregateUsageStats(startOfDay, now)
 
-    val minutesByPackage = mutableMapOf<String, Int>()
-    for (targetPackage in targetPackages) {
-      val minutes = ((aggregateUsage[targetPackage]?.totalTimeInForeground ?: 0L) / 60_000L).toInt()
-      minutesByPackage[targetPackage] = minutes
-    }
-
+    val usageMillisByPackage = mutableMapOf<String, Long>()
     val opensByPackage = mutableMapOf<String, Int>()
+    val foregroundStartByPackage = mutableMapOf<String, Long>()
+
     val usageEvents = usageStatsManager.queryEvents(startOfDay, now)
     val event = UsageEvents.Event()
     while (usageEvents.hasNextEvent()) {
@@ -52,9 +49,32 @@ class UsageStatsCollector(private val context: Context) {
       if (!targetPackages.contains(packageName)) {
         continue
       }
-      if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
-        opensByPackage[packageName] = (opensByPackage[packageName] ?: 0) + 1
+
+      if (isForegroundEvent(event.eventType)) {
+        if (!foregroundStartByPackage.containsKey(packageName)) {
+          opensByPackage[packageName] = (opensByPackage[packageName] ?: 0) + 1
+        }
+        foregroundStartByPackage[packageName] = event.timeStamp
+        continue
       }
+
+      if (isBackgroundEvent(event.eventType)) {
+        val start = foregroundStartByPackage.remove(packageName) ?: continue
+        val duration = (event.timeStamp - start).coerceAtLeast(0L)
+        usageMillisByPackage[packageName] = (usageMillisByPackage[packageName] ?: 0L) + duration
+      }
+    }
+
+    foregroundStartByPackage.forEach { (packageName, start) ->
+      val duration = (now - start).coerceAtLeast(0L)
+      usageMillisByPackage[packageName] = (usageMillisByPackage[packageName] ?: 0L) + duration
+    }
+
+    val minutesByPackage = mutableMapOf<String, Int>()
+    for (targetPackage in targetPackages) {
+      val aggregateMinutes = ((aggregateUsage[targetPackage]?.totalTimeInForeground ?: 0L) / 60_000L).toInt()
+      val eventMinutes = ((usageMillisByPackage[targetPackage] ?: 0L) / 60_000L).toInt()
+      minutesByPackage[targetPackage] = maxOf(aggregateMinutes, eventMinutes)
     }
 
     return Snapshot(minutesByPackage, opensByPackage)
@@ -81,7 +101,7 @@ class UsageStatsCollector(private val context: Context) {
         continue
       }
 
-      if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
+      if (isForegroundEvent(event.eventType)) {
         records.add(
           UsageEventRecord(
             id = UUID.randomUUID().toString(),
@@ -96,5 +116,16 @@ class UsageStatsCollector(private val context: Context) {
     }
 
     return records
+  }
+
+  private fun isForegroundEvent(eventType: Int): Boolean {
+    return eventType == UsageEvents.Event.MOVE_TO_FOREGROUND ||
+      eventType == UsageEvents.Event.ACTIVITY_RESUMED
+  }
+
+  private fun isBackgroundEvent(eventType: Int): Boolean {
+    return eventType == UsageEvents.Event.MOVE_TO_BACKGROUND ||
+      eventType == UsageEvents.Event.ACTIVITY_PAUSED ||
+      eventType == UsageEvents.Event.ACTIVITY_STOPPED
   }
 }
