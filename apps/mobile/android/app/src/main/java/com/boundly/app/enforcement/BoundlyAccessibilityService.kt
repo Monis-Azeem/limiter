@@ -20,13 +20,14 @@ class BoundlyAccessibilityService : AccessibilityService() {
   }
 
   private var lastInterventionAtMs = 0L
-  private var lastHomeActionAtMs = 0L
   private var lastObservedPackage: String? = null
   private var lastObservedAtMs = 0L
   private var lastPolicySyncAtMs = 0L
   private var cachedBlockedReasons: Map<String, String> = emptyMap()
   private var lastEnforcementEnabled = false
   private var fallbackTickerRunning = false
+  private var pendingBlockPackage: String? = null
+
   private val fallbackTicker = object : Runnable {
     override fun run() {
       if (!policyStore.isEnforcementEnabled()) {
@@ -110,7 +111,15 @@ class BoundlyAccessibilityService : AccessibilityService() {
         trackFallbackUsage(packageName, nowMs)
       }
 
-      if (packageName == applicationContext.packageName || packageName == "com.android.systemui") {
+      if (packageName == applicationContext.packageName ||
+        packageName == "com.android.systemui" ||
+        packageName == "com.android.launcher" ||
+        packageName == "com.android.launcher3" ||
+        packageName == "com.google.android.apps.nexuslauncher" ||
+        packageName == "com.sec.android.app.launcher" ||
+        packageName == "com.miui.home" ||
+        packageName == "com.huawei.android.launcher"
+      ) {
         return
       }
 
@@ -126,7 +135,15 @@ class BoundlyAccessibilityService : AccessibilityService() {
 
       lastInterventionAtMs = nowMs
       policyStore.appendDebugLog("Blocked launch intercepted: $packageName")
-      launchLockScreenDelayed(packageName, blockReason)
+
+      performGlobalAction(GLOBAL_ACTION_HOME)
+
+      pendingBlockPackage = packageName
+      mainHandler.postDelayed({
+        val pending = pendingBlockPackage ?: return@postDelayed
+        pendingBlockPackage = null
+        launchLockScreen(pending, blockReason)
+      }, LOCK_SCREEN_DELAY_MS)
     } catch (error: Exception) {
       policyStore.setLastAccessibilityError(error.message ?: error.toString())
       Log.e(TAG, "Accessibility event handling failed", error)
@@ -192,20 +209,15 @@ class BoundlyAccessibilityService : AccessibilityService() {
       val intent = Intent(this, BoundlyLockActivity::class.java).apply {
         putExtra(BoundlyLockActivity.EXTRA_BLOCKED_PACKAGE, blockedPackage)
         putExtra(BoundlyLockActivity.EXTRA_BLOCK_REASON, reason)
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+          Intent.FLAG_ACTIVITY_CLEAR_TOP or
+          Intent.FLAG_ACTIVITY_NO_ANIMATION
       }
       startActivity(intent)
     }.onFailure { error ->
       policyStore.setLastAccessibilityError(error.message ?: error.toString())
       Log.e(TAG, "Failed to launch lock screen", error)
     }
-  }
-
-  private fun launchLockScreenDelayed(blockedPackage: String, reason: String) {
-    mainHandler.postDelayed(
-      { launchLockScreen(blockedPackage, reason) },
-      LOCK_SCREEN_DELAY_MS
-    )
   }
 
   private fun ensureFallbackTicker() {
@@ -217,10 +229,10 @@ class BoundlyAccessibilityService : AccessibilityService() {
   }
 
   companion object {
-    private const val TAG = "BoundlyAccessibility"
-    private const val LOCK_INTERVENTION_COOLDOWN_MS = 1_300L
-    private const val POLICY_SYNC_COOLDOWN_MS = 1_000L
-    private const val LOCK_SCREEN_DELAY_MS = 60L
+    private const val TAG = "LimiterAccessibility"
+    private const val LOCK_INTERVENTION_COOLDOWN_MS = 800L
+    private const val POLICY_SYNC_COOLDOWN_MS = 800L
+    private const val LOCK_SCREEN_DELAY_MS = 150L
     private const val FALLBACK_TICK_MS = 2_000L
   }
 }

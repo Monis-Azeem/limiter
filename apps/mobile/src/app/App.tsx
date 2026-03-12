@@ -1,11 +1,14 @@
 import type { AppTarget, PermissionKey } from "@boundly/domain";
 import { Button, Card, Screen, colors, spacing } from "@boundly/ui-kit";
 import React, { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { enforcementService } from "../services/enforcement-service";
 import { useAppStore } from "../stores/useAppStore";
 import { typography } from "../theme/typography";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const appIcon = require("../../assets/icon.png");
 
 const REQUIRED_PERMISSION_KEYS: PermissionKey[] = [
   "usage_access",
@@ -111,12 +114,13 @@ function AppContainer(): React.JSX.Element {
     return managedApps.filter((app) => app.displayName.toLowerCase().includes(query));
   }, [appQuery, managedApps]);
 
-  const filteredLiveUsage = useMemo(() => {
+  const managedLiveUsage = useMemo(() => {
+    const enforced = liveUsage.filter((row) => row.enforced);
     const query = appQuery.trim().toLowerCase();
     if (!query) {
-      return liveUsage;
+      return enforced;
     }
-    return liveUsage.filter((row) => row.displayName.toLowerCase().includes(query));
+    return enforced.filter((row) => row.displayName.toLowerCase().includes(query));
   }, [appQuery, liveUsage]);
 
   useEffect(() => {
@@ -253,9 +257,51 @@ function AppContainer(): React.JSX.Element {
   return (
     <Screen>
       <View style={styles.header}>
-        <Text style={typography.title}>Boundly</Text>
-        <Text style={styles.subtitle}>Allow permissions, pick app, set minutes, start.</Text>
+        <View style={styles.headerRow}>
+          <Image source={appIcon} style={styles.headerIcon} />
+          <View style={styles.headerText}>
+            <Text style={typography.title}>Limiter</Text>
+            <Text style={styles.subtitle}>Take control of your screen time</Text>
+          </View>
+        </View>
       </View>
+
+      <Card>
+        <Text style={styles.stepTitle}>Setup Guide</Text>
+        <Text style={styles.helper}>
+          Since this app is not from the Play Store, follow these steps first:
+        </Text>
+        <View style={styles.setupStep}>
+          <Text style={styles.setupNumber}>1</Text>
+          <View style={styles.setupContent}>
+            <Text style={styles.setupLabel}>Pause Play Protect</Text>
+            <Text style={styles.setupDesc}>
+              Open Play Store {'>'} tap your profile icon {'>'} Play Protect {'>'} Settings gear {'>'} turn off "Scan apps with Play Protect"
+            </Text>
+          </View>
+        </View>
+        <View style={styles.setupStep}>
+          <Text style={styles.setupNumber}>2</Text>
+          <View style={styles.setupContent}>
+            <Text style={styles.setupLabel}>Allow unknown apps</Text>
+            <Text style={styles.setupDesc}>
+              Settings {'>'} Apps {'>'} Special app access {'>'} Install unknown apps {'>'} allow the source you used
+            </Text>
+          </View>
+        </View>
+        <View style={styles.setupStep}>
+          <Text style={styles.setupNumber}>3</Text>
+          <View style={styles.setupContent}>
+            <Text style={styles.setupLabel}>Allow restricted settings</Text>
+            <Text style={styles.setupDesc}>
+              Settings {'>'} Apps {'>'} Limiter {'>'} tap the three dots (top right) {'>'} "Allow restricted settings"
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.helper}>
+          After these steps, grant the permissions below.
+        </Text>
+      </Card>
 
       <Card>
         <Text style={styles.stepTitle}>Step 1: Allow permissions</Text>
@@ -287,7 +333,7 @@ function AppContainer(): React.JSX.Element {
         <View style={styles.rowBetween}>
           <Text style={styles.stepTitle}>Step 2: Pick app</Text>
           <Button
-            label={loadingApps ? "Loading..." : "Refresh apps"}
+            label={loadingApps ? "Loading..." : "Refresh"}
             variant="secondary"
             onPress={() => {
               if (!loadingApps) {
@@ -307,29 +353,31 @@ function AppContainer(): React.JSX.Element {
         {!permissionsGranted ? <Text style={styles.helper}>Grant all 3 permissions first.</Text> : null}
         {filteredManagedApps.length === 0 ? (
           <Text style={styles.helper}>
-            {loadingApps ? "Getting apps..." : "No apps found. Tap refresh apps."}
+            {loadingApps ? "Getting apps..." : "No apps found. Tap refresh."}
           </Text>
         ) : (
-          <View style={styles.appList}>
-            {filteredManagedApps.slice(0, 120).map((app) => {
-              const selected = app.id === selectedTargetId;
-              const enforced = enforcedTargetIds.has(app.id);
-              return (
-                <Pressable
-                  key={app.id}
-                  style={[styles.appRow, selected ? styles.appRowActive : undefined]}
-                  onPress={() => setSelectedTargetId(app.id)}
-                >
-                  <Text style={[styles.appRowText, selected ? styles.appRowTextActive : undefined]}>
-                    {app.displayName}
-                  </Text>
-                  <View style={styles.appBadges}>
-                    {enforced ? <Text style={styles.appRowBadge}>Enforced</Text> : null}
-                    {selected ? <Text style={styles.appRowBadgeMuted}>Selected</Text> : null}
-                  </View>
-                </Pressable>
-              );
-            })}
+          <View style={styles.appListContainer}>
+            <ScrollView nestedScrollEnabled style={styles.appListScroll}>
+              {filteredManagedApps.map((app) => {
+                const selected = app.id === selectedTargetId;
+                const enforced = enforcedTargetIds.has(app.id);
+                return (
+                  <Pressable
+                    key={app.id}
+                    style={[styles.appRow, selected ? styles.appRowActive : undefined]}
+                    onPress={() => setSelectedTargetId(app.id)}
+                  >
+                    <Text style={[styles.appRowText, selected ? styles.appRowTextActive : undefined]}>
+                      {app.displayName}
+                    </Text>
+                    <View style={styles.appBadges}>
+                      {enforced ? <Text style={styles.appRowBadge}>Enforced</Text> : null}
+                      {selected ? <Text style={styles.appRowBadgeMuted}>Selected</Text> : null}
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
           </View>
         )}
       </Card>
@@ -445,7 +493,7 @@ function AppContainer(): React.JSX.Element {
 
       <Card>
         <View style={styles.rowBetween}>
-          <Text style={styles.stepTitle}>Enforcement live now</Text>
+          <Text style={styles.stepTitle}>Live usage</Text>
           <Button
             label="Refresh"
             variant="secondary"
@@ -455,36 +503,34 @@ function AppContainer(): React.JSX.Element {
             }}
           />
         </View>
-        {filteredLiveUsage.length === 0 ? (
-          <Text style={styles.helper}>No app usage data yet.</Text>
+        {managedLiveUsage.length === 0 ? (
+          <Text style={styles.helper}>No managed app usage data yet.</Text>
         ) : (
-          <View style={styles.liveList}>
-            {filteredLiveUsage.slice(0, 160).map((row) => {
-              const status = row.blockedNow ? "Blocked" : row.enforced ? "Live" : "Not managed";
-              const usageText = row.enforced && row.dailyLimitMinutes !== undefined
-                ? `${row.minutesUsedToday} / ${row.dailyLimitMinutes} min (${Math.max(0, row.dailyLimitMinutes - row.minutesUsedToday)} left)`
-                : `${row.minutesUsedToday} min`;
-              return (
-                <View key={row.appId} style={styles.liveRow}>
-                  <View style={styles.liveMain}>
-                    <Text style={styles.liveTitle}>{row.displayName}</Text>
-                    <Text style={styles.helper}>{usageText}</Text>
+          <View style={styles.liveListContainer}>
+            <ScrollView nestedScrollEnabled style={styles.liveListScroll}>
+              {managedLiveUsage.map((row) => {
+                const status = row.blockedNow ? "Blocked" : "Live";
+                const usageText = row.dailyLimitMinutes !== undefined
+                  ? `${row.minutesUsedToday} / ${row.dailyLimitMinutes} min (${Math.max(0, row.dailyLimitMinutes - row.minutesUsedToday)} left)`
+                  : `${row.minutesUsedToday} min`;
+                return (
+                  <View key={row.appId} style={styles.liveRow}>
+                    <View style={styles.liveMain}>
+                      <Text style={styles.liveTitle}>{row.displayName}</Text>
+                      <Text style={styles.helper}>{usageText}</Text>
+                    </View>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        row.blockedNow ? styles.statusBlocked : styles.statusLive
+                      ]}
+                    >
+                      <Text style={styles.statusText}>{status}</Text>
+                    </View>
                   </View>
-                  <View
-                    style={[
-                      styles.statusBadge,
-                      row.blockedNow
-                        ? styles.statusBlocked
-                        : row.enforced
-                          ? styles.statusLive
-                          : styles.statusIdle
-                    ]}
-                  >
-                    <Text style={styles.statusText}>{status}</Text>
-                  </View>
-                </View>
-              );
-            })}
+                );
+              })}
+            </ScrollView>
           </View>
         )}
       </Card>
@@ -527,12 +573,58 @@ const styles = StyleSheet.create({
   header: {
     gap: spacing.xs
   },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md
+  },
+  headerIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 12
+  },
+  headerText: {
+    flex: 1,
+    gap: 2
+  },
   subtitle: {
     ...typography.body,
-    color: colors.textSecondary
+    color: colors.textSecondary,
+    fontSize: 14
   },
   stepTitle: {
     ...typography.heading
+  },
+  setupStep: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.md,
+    paddingVertical: spacing.sm
+  },
+  setupNumber: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.success,
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 14,
+    lineHeight: 26,
+    textAlign: "center",
+    overflow: "hidden"
+  },
+  setupContent: {
+    flex: 1,
+    gap: 2
+  },
+  setupLabel: {
+    ...typography.body,
+    fontWeight: "600"
+  },
+  setupDesc: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    lineHeight: 18
   },
   permissionRow: {
     gap: spacing.sm
@@ -558,26 +650,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
   },
-  appList: {
-    gap: spacing.sm
-  },
-  appRow: {
+  appListContainer: {
+    maxHeight: 280,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 10,
+    overflow: "hidden"
+  },
+  appListScroll: {
+    paddingVertical: spacing.xs
+  },
+  appRow: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between"
+    justifyContent: "space-between",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border
   },
   appRowActive: {
-    borderColor: colors.success,
     backgroundColor: "#ECFDF5"
   },
   appRowText: {
     ...typography.body,
-    color: colors.textPrimary
+    color: colors.textPrimary,
+    flex: 1
   },
   appRowTextActive: {
     fontWeight: "600"
@@ -633,16 +731,25 @@ const styles = StyleSheet.create({
   liveList: {
     gap: spacing.sm
   },
-  liveRow: {
+  liveListContainer: {
+    maxHeight: 260,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 10,
+    overflow: "hidden"
+  },
+  liveListScroll: {
+    paddingVertical: spacing.xs
+  },
+  liveRow: {
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    gap: spacing.sm
+    gap: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border
   },
   liveMain: {
     flex: 1,
@@ -663,9 +770,6 @@ const styles = StyleSheet.create({
   },
   statusBlocked: {
     backgroundColor: "#FEF2F2"
-  },
-  statusIdle: {
-    backgroundColor: colors.surface
   },
   statusText: {
     ...typography.caption,

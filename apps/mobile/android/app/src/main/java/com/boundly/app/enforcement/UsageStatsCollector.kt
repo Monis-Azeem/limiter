@@ -31,7 +31,6 @@ class UsageStatsCollector(
     }
 
     val dayIso = LocalDate.now().toString()
-    policyStore.clearSetupBaselinesForDay(dayIso)
     policyStore.clearFallbackUsageForDay(dayIso)
 
     return runCatching {
@@ -117,10 +116,8 @@ class UsageStatsCollector(
       val aggregateMinutes = ((aggregateUsage[targetPackage]?.totalTimeInForeground ?: 0L) / 60_000L).toInt()
       val eventMinutes = ((usageMillisByPackage[targetPackage] ?: 0L) / 60_000L).toInt()
       val rawMinutes = maxOf(aggregateMinutes, eventMinutes).coerceAtLeast(0)
-      val baselineMinutes = policyStore.getOrCreateSetupBaselineMinutes(dayIso, targetPackage, rawMinutes)
-      val adjustedMinutes = (rawMinutes - baselineMinutes).coerceAtLeast(0)
       val fallbackMinutes = policyStore.getFallbackMinutesForDay(dayIso, targetPackage)
-      minutesByPackage[targetPackage] = maxOf(adjustedMinutes, fallbackMinutes)
+      minutesByPackage[targetPackage] = maxOf(rawMinutes, fallbackMinutes)
       opensByPackage[targetPackage] = 0
     }
 

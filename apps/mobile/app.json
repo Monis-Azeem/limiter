@@ -1,10 +1,11 @@
 {
   "expo": {
-    "name": "Boundly",
-    "slug": "boundly",
-    "version": "0.1.0",
+    "name": "Limiter",
+    "slug": "limiter",
+    "version": "0.2.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
     "assetBundlePatterns": [
       "**/*"
     ],
@@ -13,7 +14,11 @@
       "supportsTablet": false
     },
     "android": {
-      "package": "com.boundly.app"
+      "package": "com.boundly.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#1E3A8A"
+      }
     },
     "extra": {
       "eas": {

@@ -100,7 +100,7 @@ class BoundlyForegroundService : Service() {
     val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     val channel = NotificationChannel(
       CHANNEL_ID,
-      "Boundly Enforcement",
+      "Limiter Enforcement",
       NotificationManager.IMPORTANCE_LOW
     )
     channel.description = "Maintains app usage enforcement rules"
@@ -110,7 +110,7 @@ class BoundlyForegroundService : Service() {
   private fun buildNotification(): Notification {
     return NotificationCompat.Builder(this, CHANNEL_ID)
       .setSmallIcon(R.mipmap.ic_launcher)
-      .setContentTitle("Boundly enforcement active")
+      .setContentTitle("Limiter enforcement active")
       .setContentText("Blocking restricted apps in the background")
       .setOngoing(true)
       .build()

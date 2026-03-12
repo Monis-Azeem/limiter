@@ -41,7 +41,9 @@
       android:name=".enforcement.BoundlyLockActivity"
       android:excludeFromRecents="true"
       android:exported="false"
-      android:launchMode="singleTask"
+      android:launchMode="singleInstance"
+      android:taskAffinity=""
+      android:noHistory="true"
       android:theme="@style/AppTheme" />
     <service
       android:name=".enforcement.BoundlyForegroundService"
