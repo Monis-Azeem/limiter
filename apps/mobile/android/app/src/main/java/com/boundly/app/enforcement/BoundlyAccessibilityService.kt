@@ -25,6 +25,33 @@ class BoundlyAccessibilityService : AccessibilityService() {
   private var lastObservedAtMs = 0L
   private var lastPolicySyncAtMs = 0L
   private var cachedBlockedReasons: Map<String, String> = emptyMap()
+  private var lastEnforcementEnabled = false
+  private var fallbackTickerRunning = false
+  private val fallbackTicker = object : Runnable {
+    override fun run() {
+      if (!policyStore.isEnforcementEnabled()) {
+        fallbackTickerRunning = false
+        return
+      }
+
+      val nowMs = SystemClock.elapsedRealtime()
+      val packageName = lastObservedPackage
+      if (!packageName.isNullOrBlank()) {
+        val managedPackages = policyEvaluator.parseManagedPackages()
+        if (managedPackages.contains(packageName)) {
+          val elapsedSeconds = ((nowMs - lastObservedAtMs).coerceAtLeast(0L) / 1000L)
+          if (elapsedSeconds > 0L) {
+            policyStore.addFallbackUsageSeconds(LocalDate.now().toString(), packageName, elapsedSeconds)
+            lastObservedAtMs = nowMs
+          }
+        } else {
+          lastObservedAtMs = nowMs
+        }
+      }
+
+      mainHandler.postDelayed(this, FALLBACK_TICK_MS)
+    }
+  }
 
   override fun onServiceConnected() {
     super.onServiceConnected()
@@ -41,6 +68,7 @@ class BoundlyAccessibilityService : AccessibilityService() {
       if (policyStore.isEnforcementEnabled()) {
         BoundlyForegroundService.start(this)
         refreshBlockedPolicies(SystemClock.elapsedRealtime(), force = true)
+        ensureFallbackTicker()
       }
 
       Log.i(TAG, "Accessibility service connected")
@@ -65,13 +93,22 @@ class BoundlyAccessibilityService : AccessibilityService() {
       val packageName = event.packageName?.toString() ?: return
       val nowMs = SystemClock.elapsedRealtime()
 
-      if (!policyStore.isEnforcementEnabled()) {
+      val enforcementEnabled = policyStore.isEnforcementEnabled()
+      if (!enforcementEnabled) {
+        lastEnforcementEnabled = false
         lastObservedPackage = packageName
         lastObservedAtMs = nowMs
         return
       }
 
-      trackFallbackUsage(packageName, nowMs)
+      if (!lastEnforcementEnabled) {
+        lastEnforcementEnabled = true
+        lastObservedPackage = packageName
+        lastObservedAtMs = nowMs
+        ensureFallbackTicker()
+      } else {
+        trackFallbackUsage(packageName, nowMs)
+      }
 
       if (packageName == applicationContext.packageName || packageName == "com.android.systemui") {
         return
@@ -88,7 +125,6 @@ class BoundlyAccessibilityService : AccessibilityService() {
       }
 
       lastInterventionAtMs = nowMs
-      performHomeAction(nowMs)
       policyStore.appendDebugLog("Blocked launch intercepted: $packageName")
       launchLockScreenDelayed(packageName, blockReason)
     } catch (error: Exception) {
@@ -147,18 +183,6 @@ class BoundlyAccessibilityService : AccessibilityService() {
     }
   }
 
-  private fun performHomeAction(nowMs: Long) {
-    if (nowMs - lastHomeActionAtMs < HOME_ACTION_COOLDOWN_MS) {
-      return
-    }
-    runCatching {
-      performGlobalAction(GLOBAL_ACTION_HOME)
-      lastHomeActionAtMs = nowMs
-    }.onFailure { error ->
-      policyStore.appendDebugLog("Home action failed: ${error.message ?: error.toString()}")
-    }
-  }
-
   private fun launchLockScreen(blockedPackage: String, reason: String) {
     if (blockedPackage == applicationContext.packageName) {
       return
@@ -184,11 +208,19 @@ class BoundlyAccessibilityService : AccessibilityService() {
     )
   }
 
+  private fun ensureFallbackTicker() {
+    if (fallbackTickerRunning) {
+      return
+    }
+    fallbackTickerRunning = true
+    mainHandler.postDelayed(fallbackTicker, FALLBACK_TICK_MS)
+  }
+
   companion object {
     private const val TAG = "BoundlyAccessibility"
     private const val LOCK_INTERVENTION_COOLDOWN_MS = 1_300L
-    private const val HOME_ACTION_COOLDOWN_MS = 900L
     private const val POLICY_SYNC_COOLDOWN_MS = 1_000L
-    private const val LOCK_SCREEN_DELAY_MS = 180L
+    private const val LOCK_SCREEN_DELAY_MS = 60L
+    private const val FALLBACK_TICK_MS = 2_000L
   }
 }

@@ -133,6 +133,10 @@ class BoundlyLockActivity : Activity() {
     super.onDestroy()
   }
 
+  override fun onBackPressed() {
+    openHomeAndFinish()
+  }
+
   private fun openHomeAndFinish() {
     val homeIntent = Intent(Intent.ACTION_MAIN).apply {
       addCategory(Intent.CATEGORY_HOME)
