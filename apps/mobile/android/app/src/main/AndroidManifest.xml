@@ -41,13 +41,13 @@
       android:name=".enforcement.BoundlyLockActivity"
       android:excludeFromRecents="true"
       android:exported="false"
-      android:launchMode="singleInstance"
-      android:taskAffinity=""
-      android:noHistory="true"
+      android:launchMode="singleTask"
+      android:taskAffinity="com.boundly.app.lock"
       android:theme="@style/AppTheme" />
     <service
       android:name=".enforcement.BoundlyForegroundService"
       android:exported="false"
+      android:stopWithTask="false"
       android:foregroundServiceType="dataSync" />
     <service
       android:name=".enforcement.BoundlyAccessibilityService"

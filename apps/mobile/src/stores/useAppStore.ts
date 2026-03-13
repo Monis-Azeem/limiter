@@ -541,8 +541,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
     await repository.setRetentionPolicy(retentionPolicyAfterPrune);
 
-    await enforcementService.syncRules(profiles);
-
     const permissionStates = await enforcementService.getPermissionStates();
     const permissionsGranted = permissionStates
       .filter((permissionState) =>
@@ -551,6 +549,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         )
       )
       .every((permissionState) => permissionState.granted);
+
+    if (profiles.length > 0 && permissionsGranted) {
+      await enforcementService.startEnforcement(profiles);
+    } else {
+      await enforcementService.syncRules(profiles);
+    }
 
     const health = await enforcementService.getHealth();
 

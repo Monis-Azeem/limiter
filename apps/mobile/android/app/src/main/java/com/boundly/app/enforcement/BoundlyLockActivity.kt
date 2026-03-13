@@ -8,9 +8,8 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.util.TypedValue
 import android.view.Gravity
-import android.view.View
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.boundly.app.MainActivity
@@ -27,7 +26,7 @@ class BoundlyLockActivity : Activity() {
         openHomeAndFinish()
         return
       }
-      countdownText.text = "Closing in ${secondsRemaining}s"
+      countdownText.text = "Returning to Home in ${secondsRemaining}s"
       secondsRemaining -= 1
       handler.postDelayed(this, 1_000L)
     }
@@ -44,96 +43,70 @@ class BoundlyLockActivity : Activity() {
     val root = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
       gravity = Gravity.CENTER
-      setPadding(0, 0, 0, 0)
-      setBackgroundColor(Color.parseColor("#E8000000"))
+      setPadding(56, 56, 56, 56)
+      background = GradientDrawable(
+        GradientDrawable.Orientation.TOP_BOTTOM,
+        intArrayOf(Color.parseColor("#EAF1FF"), Color.parseColor("#F6FBFF"))
+      )
     }
 
     val card = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
       gravity = Gravity.CENTER
-      setPadding(dpToPx(32), dpToPx(36), dpToPx(32), dpToPx(28))
-      val marginParams = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.MATCH_PARENT,
-        LinearLayout.LayoutParams.WRAP_CONTENT
-      ).apply {
-        setMargins(dpToPx(24), 0, dpToPx(24), 0)
-      }
-      layoutParams = marginParams
+      setPadding(48, 52, 48, 52)
       background = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
-        cornerRadius = dpToPx(20).toFloat()
+        cornerRadius = 28f
         setColor(Color.WHITE)
+        setStroke(2, Color.parseColor("#E2E8F0"))
       }
-    }
-
-    val blockedIcon = TextView(this).apply {
-      text = "\u23F1"
-      textSize = 40f
-      gravity = Gravity.CENTER
-      setPadding(0, 0, 0, dpToPx(8))
     }
 
     val title = TextView(this).apply {
-      text = "$blockedAppName"
-      textSize = 22f
-      setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD))
+      text = "Time limit reached"
+      textSize = 24f
+      setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
       gravity = Gravity.CENTER
       setTextColor(Color.parseColor("#0F172A"))
     }
 
-    val subtitle = TextView(this).apply {
-      text = "Time limit reached"
+    val appText = TextView(this).apply {
+      text = "$blockedAppName is blocked for now."
       textSize = 15f
       gravity = Gravity.CENTER
       setTypeface(Typeface.create("sans-serif", Typeface.NORMAL))
-      setTextColor(Color.parseColor("#DC2626"))
-      setPadding(0, dpToPx(4), 0, 0)
+      setTextColor(Color.parseColor("#334155"))
+      setPadding(0, 12, 0, 0)
     }
 
     val reasonText = TextView(this).apply {
       text = reason
-      textSize = 13f
+      textSize = 14f
       gravity = Gravity.CENTER
       setTypeface(Typeface.create("sans-serif", Typeface.NORMAL))
-      setTextColor(Color.parseColor("#64748B"))
-      setPadding(0, dpToPx(4), 0, dpToPx(16))
-    }
-
-    val divider = View(this).apply {
-      layoutParams = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.MATCH_PARENT,
-        dpToPx(1)
-      ).apply {
-        setMargins(0, 0, 0, dpToPx(16))
-      }
-      setBackgroundColor(Color.parseColor("#F1F5F9"))
+      setTextColor(Color.parseColor("#475569"))
+      setPadding(0, 8, 0, 12)
     }
 
     val quoteText = TextView(this).apply {
-      text = "\u201C$quote\u201D"
-      textSize = 17f
+      text = "“$quote”"
+      textSize = 19f
       gravity = Gravity.CENTER
       setTypeface(Typeface.create("serif", Typeface.ITALIC))
-      setTextColor(Color.parseColor("#1E293B"))
-      setPadding(dpToPx(8), 0, dpToPx(8), dpToPx(20))
-      setLineSpacing(dpToPx(4).toFloat(), 1f)
+      setTextColor(Color.parseColor("#0F172A"))
+      setPadding(0, 16, 0, 22)
     }
 
     countdownText = TextView(this).apply {
       textSize = 13f
       gravity = Gravity.CENTER
       setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
-      setTextColor(Color.parseColor("#94A3B8"))
-      setPadding(0, 0, 0, dpToPx(12))
+      setTextColor(Color.parseColor("#2563EB"))
     }
 
-    val manageLink = TextView(this).apply {
-      text = "Manage limits"
-      textSize = 13f
-      gravity = Gravity.CENTER
-      setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
-      setTextColor(Color.parseColor("#3B82F6"))
-      setPadding(0, 0, 0, 0)
+    val openBoundlyButton = Button(this).apply {
+      text = "Open Limiter"
+      setAllCaps(false)
       setOnClickListener {
         handler.removeCallbacks(countdownRunnable)
         val appIntent = Intent(this@BoundlyLockActivity, MainActivity::class.java).apply {
@@ -144,14 +117,12 @@ class BoundlyLockActivity : Activity() {
       }
     }
 
-    card.addView(blockedIcon)
     card.addView(title)
-    card.addView(subtitle)
+    card.addView(appText)
     card.addView(reasonText)
-    card.addView(divider)
     card.addView(quoteText)
     card.addView(countdownText)
-    card.addView(manageLink)
+    card.addView(openBoundlyButton)
     root.addView(card)
     setContentView(root)
     handler.post(countdownRunnable)
@@ -162,7 +133,6 @@ class BoundlyLockActivity : Activity() {
     super.onDestroy()
   }
 
-  @Suppress("DEPRECATION")
   override fun onBackPressed() {
     openHomeAndFinish()
   }
@@ -183,17 +153,9 @@ class BoundlyLockActivity : Activity() {
     }.getOrDefault(packageName)
   }
 
-  private fun dpToPx(dp: Int): Int {
-    return TypedValue.applyDimension(
-      TypedValue.COMPLEX_UNIT_DIP,
-      dp.toFloat(),
-      resources.displayMetrics
-    ).toInt()
-  }
-
   companion object {
     const val EXTRA_BLOCKED_PACKAGE = "blocked_package"
     const val EXTRA_BLOCK_REASON = "block_reason"
-    private const val AUTO_CLOSE_SECONDS = 6
+    private const val AUTO_CLOSE_SECONDS = 15
   }
 }

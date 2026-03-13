@@ -222,7 +222,7 @@ class BoundlyEnforcementModule(private val reactContext: ReactApplicationContext
         staleHeartbeat && selfHeal.attempted && selfHeal.succeeded ->
           "Enforcement heartbeat was stale. Auto-restart triggered."
         staleHeartbeat && selfHeal.attempted && !selfHeal.succeeded ->
-          "Enforcement heartbeat is stale. Auto-restart failed; open Limiter and tap Start enforcement."
+          "Enforcement heartbeat is stale. Auto-restart failed; open Boundly and tap Start enforcement."
         staleHeartbeat -> "Enforcement heartbeat is stale. Waiting before next auto-restart attempt."
         else -> null
       }
